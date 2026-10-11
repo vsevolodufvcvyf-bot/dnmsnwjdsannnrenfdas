@@ -59,8 +59,8 @@ def clear_wait(uid: int) -> None:
 
 
 def _owner_id() -> int:
-    raw = os.getenv("TELEGRAM_OWNER_ID", "").strip()
-    return int(raw) if raw.isdigit() else 0
+    from shop_core.team import owner_id
+    return owner_id()
 
 
 def _ok(cardinal, uid: int) -> bool:
@@ -69,7 +69,14 @@ def _ok(cardinal, uid: int) -> bool:
 
 
 def _is_owner(uid: int) -> bool:
-    return int(uid) == _owner_id()
+    from shop_core.team import is_owner
+    return is_owner(uid)
+
+
+def _owner_hint() -> str:
+    if not _owner_id():
+        return "Владелец не задан: впиши свой Telegram ID в .env → TELEGRAM_OWNER_ID и перезапусти бота."
+    return "Вывод может подтвердить только владелец."
 
 
 def luhn_ok(num: str) -> bool:
@@ -395,7 +402,7 @@ def init_post(cardinal):
         if not guard(m):
             return
         if not _is_owner(m.from_user.id):
-            bot.send_message(m.chat.id, "Вывод может подтвердить только владелец.")
+            bot.send_message(m.chat.id, _owner_hint())
             return
         _start_out(m.chat.id, m.from_user.id)
 
@@ -522,7 +529,7 @@ def init_post(cardinal):
             return
         if action == "out":
             if not _is_owner(c.from_user.id):
-                bot.send_message(c.message.chat.id, "Вывод подтверждает только владелец.")
+                bot.send_message(c.message.chat.id, _owner_hint())
                 return
             _start_out(c.message.chat.id, c.from_user.id)
             return
@@ -568,7 +575,7 @@ def init_post(cardinal):
             return
         if action == "go":
             if not _is_owner(c.from_user.id):
-                bot.send_message(c.message.chat.id, "Подтвердить вывод может только владелец.")
+                bot.send_message(c.message.chat.id, _owner_hint())
                 return
             st = _WAIT.get(c.from_user.id) or {}
             if st.get("mode") != "confirm" or not st.get("dest") or not st.get("amount"):

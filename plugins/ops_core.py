@@ -11,7 +11,7 @@ from threading import Thread
 
 from shop_core import logging_redact
 from shop_core.bus import (
-    MSG_ORIGIN, bind_cardinal, drain_digest, freeze, hydrate, is_frozen, mark_human,
+    MSG_ORIGIN, bind_cardinal, drain_digest, freeze, freeze_bypassed, hydrate, is_frozen, mark_human,
     notify, quiet_hours_now, release_chat, unfreeze,
 )
 from shop_core.db import DB_FILE, get_db
@@ -46,7 +46,7 @@ def _install_watchdog(cardinal) -> None:
 
     def wrapped(*args, **kwargs):
         from FunPayAPI.common.exceptions import UnauthorizedError
-        if is_frozen():
+        if is_frozen() and not freeze_bypassed():
             time.sleep(20)
             raise RuntimeError("FunPay session frozen")
         try:

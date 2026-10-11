@@ -337,14 +337,19 @@ class TGBot:
             logger.warning(_("log_access_attempt", m.from_user.username, m.from_user.id))
         self.bot.send_message(m.chat.id, text, reply_markup=kb_links)
 
+    def team_decision(self, c: CallbackQuery):
+        """Кнопки «Пустить / Отказать» в запросе доступа приглашённого оператора."""
+        from shop_core.team import handle_decision
+        handle_decision(self, c)
+
     def ignore_unauthorized_users(self, c: CallbackQuery):
         """
         Игнорирует callback'и от не авторизированных пользователей.
         """
         try:
-            from shop_core.team import extra_ids, grant_operator, username_allowed
+            from shop_core.team import extra_ids, grant_operator, request_approval, username_invited
             uname = getattr(c.from_user, "username", None)
-            if c.from_user.id in extra_ids() or username_allowed(uname):
+            if c.from_user.id in extra_ids():
                 grant_operator(self, c.from_user.id, uname)
                 try:
                     self.bot.answer_callback_query(c.id, "Доступ открыт. Нажми ещё раз.")
@@ -352,6 +357,13 @@ class TGBot:
                     pass
                 try:
                     self.bot.send_message(c.message.chat.id, "✅ Доступ открыт. Нажми /menu.")
+                except Exception:
+                    pass
+                return
+            if username_invited(uname):
+                request_approval(self, c.from_user.id, uname)
+                try:
+                    self.bot.answer_callback_query(c.id, "Запрос отправлен владельцу.", show_alert=True)
                 except Exception:
                     pass
                 return
@@ -411,7 +423,9 @@ class TGBot:
             one_acc = True
             self.cardinal.account.golden_key = golden_key
             try:
-                self.cardinal.account.get()
+                from shop_core.bus import bypass_freeze
+                with bypass_freeze():
+                    self.cardinal.account.get()
             except:
                 logger.warning("Произошла ошибка")  # locale
                 logger.debug("TRACEBACK", exc_info=True)
@@ -431,21 +445,6 @@ class TGBot:
                 unfreeze()
             else:
                 set_flag("unfreeze_after_start", "1")
-        except Exception:
-            logger.debug("TRACEBACK", exc_info=True)
-        try:
-            env_path = os.path.join(os.getcwd(), ".env")
-            if os.path.isfile(env_path):
-                raw = open(env_path, "r", encoding="utf-8").read()
-                if "FUNPAY_GOLDEN_KEY=" in raw:
-                    lines = []
-                    for line in raw.splitlines(keepends=True):
-                        if line.startswith("FUNPAY_GOLDEN_KEY="):
-                            nl = "\n" if line.endswith("\n") else ""
-                            lines.append(f"FUNPAY_GOLDEN_KEY={golden_key}{nl}")
-                        else:
-                            lines.append(line)
-                    open(env_path, "w", encoding="utf-8").write("".join(lines))
         except Exception:
             logger.debug("TRACEBACK", exc_info=True)
         extra = ""
@@ -1140,6 +1139,7 @@ class TGBot:
         self.msg_handler(self.reg_admin, func=lambda msg: msg.from_user.id not in self.authorized_users,
                          content_types=['text', 'document', 'photo', 'sticker'])
         self.cbq_handler(self.ignore_unauthorized_users, lambda c: c.from_user.id not in self.authorized_users)
+        self.cbq_handler(self.team_decision, lambda c: (c.data or "").startswith("TEAM:"))
         self.cbq_handler(self.param_disabled, lambda c: c.data.startswith(CBT.PARAM_DISABLED))
         self.msg_handler(self.run_file_handlers, content_types=["photo", "document"],
                          func=lambda m: self.is_file_handler(m))

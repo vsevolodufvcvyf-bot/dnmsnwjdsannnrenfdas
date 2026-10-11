@@ -32,8 +32,8 @@ _READY = False
 
 
 def _owner_id() -> int | None:
-    raw = os.getenv("TELEGRAM_OWNER_ID", "").strip()
-    return int(raw) if raw.isdigit() else None
+    from shop_core.team import owner_id
+    return owner_id() or None
 
 
 def _auth_owner(cardinal) -> None:

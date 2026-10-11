@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import contextlib
 import contextvars
 import logging
 import re
@@ -24,6 +25,22 @@ MSG_ORIGIN = contextvars.ContextVar("fp_msg_origin", default="human")
 
 _LOCK = threading.RLock()
 _CARDINAL = None
+_BYPASS = threading.local()
+
+
+@contextlib.contextmanager
+def bypass_freeze():
+    """Разовые запросы к FunPay в обход заморозки: проверка нового golden_key, проба сессии."""
+    prev = getattr(_BYPASS, "on", False)
+    _BYPASS.on = True
+    try:
+        yield
+    finally:
+        _BYPASS.on = prev
+
+
+def freeze_bypassed() -> bool:
+    return bool(getattr(_BYPASS, "on", False))
 
 
 def bind_cardinal(cardinal) -> None:

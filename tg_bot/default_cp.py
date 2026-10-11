@@ -21,6 +21,7 @@ _ = localizer.translate
 PLUGIN_CB_PREFIXES = [
     "PANEL:", "PSET:", "MKT:", "RST:", "OPS:", "SHOP:", "WAL:", "METH:",
     "CHECK:", "HOW:", "MICRO:", "APR:", "STAR:", "GIFT:", "MA_RENT",
+    "TEAM:", "ABK:", "CNF:", "TOOLS:",
     f"{CBT.PLUGIN_SETTINGS}:",
 ]
 

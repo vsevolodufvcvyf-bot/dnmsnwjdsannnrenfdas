@@ -20,8 +20,7 @@ from shop_core.panels import (
 from shop_core.plugin_settings import SettingsPage
 from shop_core.settings import is_dry_run, is_panic, min_margin_mult
 from shop_core.team import (
-    allowed_usernames, bootstrap, grant_operator, load_team, remember_id, save_team,
-    team_text, username_allowed,
+    bootstrap, grant_operator, invite_username, invited_usernames, is_owner, owner_id, team_text,
 )
 from tg_bot.panel_ui import all_reply_labels
 
@@ -39,7 +38,6 @@ BIND_TO_COMMANDS = {}
 _READY = False
 _WIZ: dict[int, dict] = {}
 _LAST_DAY = ""
-_OWNER = 0
 
 
 def clear_wait(uid: int) -> None:
@@ -47,12 +45,11 @@ def clear_wait(uid: int) -> None:
 
 
 def _owner_id() -> int:
-    raw = os.getenv("TELEGRAM_OWNER_ID", str(_OWNER)).strip()
-    return int(raw) if raw.isdigit() else _OWNER
+    return owner_id()
 
 
 def _is_owner(uid: int) -> bool:
-    return int(uid) == _owner_id()
+    return is_owner(uid)
 
 
 def _ok(cardinal, uid: int) -> bool:
@@ -458,14 +455,19 @@ def init_pre(cardinal):
         if not guard(m):
             return
         if not _is_owner(m.from_user.id):
-            bot.send_message(m.chat.id, "Добавлять людей может только владелец. Напиши ему @юз.")
+            if not _owner_id():
+                bot.send_message(m.chat.id, "Владелец не задан. Впиши свой ID в .env → TELEGRAM_OWNER_ID и перезапусти.")
+            else:
+                bot.send_message(m.chat.id, "Добавлять людей может только владелец.")
             return
         parts = (m.text or "").split()
         if len(parts) < 2:
             bot.send_message(
                 m.chat.id,
-                "Кого добавить? Пример: <code>/op @username</code> или <code>/op 123456789</code>\n"
-                "Человек пишет боту /menu — пульт откроется без пароля.",
+                "Кого добавить?\n"
+                "<code>/op 123456789</code> — сразу по Telegram ID (узнать у @userinfobot).\n"
+                "<code>/op @username</code> — приглашение: когда человек напишет боту, "
+                "тебе придёт кнопка «Пустить».",
                 parse_mode="HTML",
             )
             return
@@ -473,32 +475,19 @@ def init_pre(cardinal):
         if raw.isdigit():
             grant_operator(tg, int(raw), None)
             bot.send_message(m.chat.id, f"✅ ID <code>{raw}</code> в команде. Пусть нажмёт /menu.", parse_mode="HTML")
-            return
-        cfg = load_team()
-        names = [x.strip() for x in (cfg.get("Team", "usernames", fallback="") or "").split(",") if x.strip()]
-        if raw.lower() not in {n.lower() for n in names}:
-            names.append(raw)
-            cfg.set("Team", "usernames", ", ".join(names))
-            save_team(cfg)
-        remember_id(_owner_id(), None)
-        found = None
-        try:
-            chat = bot.get_chat(f"@{raw}")
-            found = int(getattr(chat, "id", 0) or 0)
-        except Exception:
-            found = None
-        if found:
-            grant_operator(tg, found, raw)
-            bot.send_message(m.chat.id, f"✅ @{raw} в команде, id <code>{found}</code>.", parse_mode="HTML")
             try:
-                bot.send_message(found, "✅ Тебя добавили в пульт nnanserShop. Нажми /menu.")
+                bot.send_message(int(raw), "✅ Тебя добавили в пульт nnanserShop. Нажми /menu.")
             except Exception:
-                bot.send_message(m.chat.id, "Он ещё не писал боту — пусть откроет чат и нажмёт /menu.")
-        else:
-            bot.send_message(
-                m.chat.id,
-                f"✅ @{raw} в списке. Как только напишет боту /menu — пульт откроется без пароля.",
-            )
+                pass
+            return
+        if not invite_username(raw):
+            bot.send_message(m.chat.id, "Это не похоже на ник Telegram. Пример: <code>/op @username</code>", parse_mode="HTML")
+            return
+        bot.send_message(
+            m.chat.id,
+            f"✉️ @{html.escape(raw)} приглашён. Когда он напишет боту /menu, "
+            f"тебе придёт запрос с кнопкой «Пустить». Без твоего подтверждения доступа не будет.",
+        )
 
     def _is_wiz_text(m: Message) -> bool:
         if not m.from_user or m.from_user.id not in _WIZ:
@@ -708,40 +697,27 @@ def init_post(cardinal):
             bootstrap(tg)
         except Exception as ex:
             logger.debug("[ShopDesk] bootstrap: %s", ex)
-        pending = sorted(allowed_usernames())
-        have = {
-            str((meta or {}).get("username") or "").lower()
-            for meta in (tg.authorized_users or {}).values()
-            if isinstance(meta, dict)
-        }
-        missing = [n for n in pending if n not in have]
+        pending = sorted(invited_usernames())
         day = datetime.now().strftime("%Y-%m-%d")
-        if missing and get_flag("team_pending_notice") != day:
+        if pending and get_flag("team_pending_notice") != day:
             try:
                 notify(
                     cardinal,
-                    "👥 В команде ждут первого сообщения: "
-                    + ", ".join(f"@{n}" for n in missing)
-                    + "\nПусть напишут боту /menu — пароль не нужен.",
+                    "👥 Приглашены, но ещё не подтверждены: "
+                    + ", ".join(f"@{html.escape(n)}" for n in pending)
+                    + "\nКогда человек напишет боту /menu, тебе придёт кнопка «Пустить».",
                     True,
                 )
                 set_flag("team_pending_notice", day)
             except Exception:
-                pass
-        for uid, meta in list((tg.authorized_users or {}).items()):
-            nick = (meta or {}).get("username") if isinstance(meta, dict) else ""
-            if nick and username_allowed(nick) and int(uid) != _owner_id():
-                flag = f"welcome_{nick.lower()}"
-                if get_flag(flag) == "1":
-                    continue
-                try:
-                    tg.bot.send_message(
-                        int(uid),
-                        "✅ Ты в команде nnanserShop. Нажми /menu — откроется пульт.",
-                    )
-                    set_flag(flag, "1")
-                except Exception:
-                    pass
+                logger.debug("TRACEBACK", exc_info=True)
+        if not _owner_id():
+            notify(
+                cardinal,
+                "⚠️ Владелец не задан: вывод денег и добавление операторов выключены.\n"
+                "Впиши свой Telegram ID в .env → TELEGRAM_OWNER_ID и перезапусти бота.",
+                True,
+            )
     Thread(target=_digest_loop, args=(cardinal,), daemon=True).start()
 
 
