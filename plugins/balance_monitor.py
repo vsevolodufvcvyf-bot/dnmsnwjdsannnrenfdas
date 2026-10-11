@@ -12,10 +12,10 @@ from datetime import datetime
 from telebot.types import InlineKeyboardMarkup as K, InlineKeyboardButton as B, Message, CallbackQuery
 
 from FunPayAPI.common.enums import Currency, Wallet
-from plugins._common.bus import is_frozen, notify
-from plugins._common.db import get_db
-from plugins._common.plugin_settings import SettingsPage
-from plugins._common.settings import (
+from shop_core.bus import is_frozen, notify
+from shop_core.db import get_db
+from shop_core.plugin_settings import SettingsPage
+from shop_core.settings import (
     is_dry_run, is_panic, withdraw_fee_pct, withdraw_min_rub,
 )
 
@@ -306,7 +306,7 @@ _HOLD_LOOP = False
 
 def note_hold(held: float, now: float | None = None) -> list[list[float]]:
     import json
-    from plugins._common.bus import get_flag, set_flag
+    from shop_core.bus import get_flag, set_flag
     now = float(now if now is not None else time.time())
     try:
         hist = json.loads(get_flag(HOLD_HIST_KEY, "[]") or "[]")
@@ -331,7 +331,7 @@ def hold_stuck(hist: list[list[float]], now: float) -> float:
 
 
 def _hold_loop(cardinal) -> None:
-    from plugins._common.bus import get_flag, set_flag
+    from shop_core.bus import get_flag, set_flag
     while True:
         time.sleep(HOLD_EVERY)
         try:

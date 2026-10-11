@@ -7,11 +7,11 @@ import os
 from threading import Thread
 
 from FunPayAPI.common.enums import MessageTypes
-from plugins._common.bus import bot_send, is_frozen, notify
-from plugins._common.db import get_db
-from plugins._common.finance import claim_order, release_claim
-from plugins._common.settings import is_dry_run, is_panic, ini_bool, flip_ini
-from plugins._common.plugin_settings import SettingsPage
+from shop_core.bus import bot_send, is_frozen, notify
+from shop_core.db import get_db
+from shop_core.finance import claim_order, release_claim
+from shop_core.settings import is_dry_run, is_panic, ini_bool, flip_ini
+from shop_core.plugin_settings import SettingsPage
 
 logger = logging.getLogger("FPC.Autoback")
 

@@ -6,9 +6,9 @@ import logging
 import time
 from datetime import datetime, timedelta
 
-from plugins._common.db import get_db
-from plugins._common.plugin_settings import SettingsPage
-from plugins._common.settings import ini_bool, set_ini
+from shop_core.db import get_db
+from shop_core.plugin_settings import SettingsPage
+from shop_core.settings import ini_bool, set_ini
 
 logger = logging.getLogger("FPC.RaiseClock")
 
@@ -118,6 +118,21 @@ def raise_decision(now: datetime | None = None) -> tuple[bool, str, int]:
     return False, f"сейчас не час покупок ({why})", min(600, seconds_until(hours, moment))
 
 
+_DECISION_CACHE: dict[str, tuple[float, tuple[bool, str, int]]] = {}
+_DECISION_TTL = 60.0
+
+
+def raise_decision_cached() -> tuple[bool, str, int]:
+    """Цикл поднятия спрашивает каждые 5 секунд; план по базе пересчитываем раз в минуту."""
+    now = time.time()
+    hit = _DECISION_CACHE.get("plan")
+    if hit and now - hit[0] < _DECISION_TTL:
+        return hit[1]
+    res = raise_decision()
+    _DECISION_CACHE["plan"] = (now, res)
+    return res
+
+
 def note_order(order_id: str, when: float | None = None) -> None:
     oid = str(order_id or "").lstrip("#")
     if not oid or oid.upper() == "ADTEST":
@@ -140,7 +155,7 @@ def status_line() -> str:
 def seed_history(cardinal) -> None:
     """Один раз, если часов ещё нет: первая страница закрытых продаж, не больше 50."""
     try:
-        from plugins._common.bus import is_frozen
+        from shop_core.bus import is_frozen
         if is_frozen():
             return
         with get_db() as conn:
@@ -181,6 +196,8 @@ def on_order(cardinal, event):
 
 
 def init_settings(cardinal):
+    from shop_core import hooks
+    hooks.provide("raise_gate", raise_decision_cached)
     SettingsPage(UUID, NAME, "Лоты поднимаются в часы, когда их покупали за 30 дней. Ночью — нет.") \
         .add_toggle(
             "enabled", "Часы поднятия", _enabled,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import logging
 
 from telebot.types import (
     InlineKeyboardMarkup as K,
@@ -12,6 +13,8 @@ from telebot.types import (
     Message,
 )
 from tg_bot import CBT
+
+logger = logging.getLogger("TGBot.Panel")
 
 BTN_HOME = "🏠 Главная"
 BTN_PRICE = "📈 Цена"
@@ -58,8 +61,8 @@ def clear_all_waits(uid: int) -> None:
 
 def home_text(cardinal) -> str:
     try:
-        from plugins._common.settings import is_dry_run, is_panic
-        from plugins._common.bus import is_frozen, get_flag
+        from shop_core.settings import is_dry_run, is_panic
+        from shop_core.bus import is_frozen, get_flag
     except Exception:
         is_dry_run = lambda: False
         is_panic = lambda: False
@@ -103,10 +106,10 @@ def home_text(cardinal) -> str:
         badge = "🟢  магазин в работе"
     apr = "выкл"
     try:
-        from plugins.auto_price import _enabled
-        apr = "вкл" if _enabled() else "выкл"
+        from shop_core.settings import ini_bool
+        apr = "вкл" if ini_bool("configs/autoprice.cfg", "AutoPrice", "enabled", True) else "выкл"
     except Exception:
-        pass
+        logger.debug("TRACEBACK", exc_info=True)
     return (
         f"<b>nnanserShop</b>\n"
         f"{HR}\n"

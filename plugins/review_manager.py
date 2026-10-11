@@ -6,10 +6,10 @@ import random
 from threading import Thread
 
 from FunPayAPI.common.enums import MessageTypes
-from plugins._common.bus import bot_send, notify
-from plugins._common.db import get_db
-from plugins._common.settings import ini_bool, flip_ini
-from plugins._common.plugin_settings import SettingsPage
+from shop_core.bus import bot_send, notify
+from shop_core.db import get_db
+from shop_core.settings import ini_bool, flip_ini
+from shop_core.plugin_settings import SettingsPage
 
 logger = logging.getLogger("FPC.ReviewManager")
 
@@ -60,7 +60,7 @@ def handle_good_review(cardinal, event):
 
         if stars == 5 and ini_bool(CONFIG_FILE, "Review", "bonus_hour", True):
             now = time.time()
-            from plugins._common.bus import peer_ids
+            from shop_core.bus import peer_ids
             aid = getattr(getattr(cardinal, "account", None), "id", None)
             ids = peer_ids(msg.chat_id, getattr(order, "buyer_id", None), account_id=aid) or [-1]
             q = ",".join("?" * len(ids))
@@ -76,7 +76,7 @@ def handle_good_review(cardinal, event):
                 rental = c.fetchone()
 
                 if rental:
-                    from plugins._common.finance import claim_order
+                    from shop_core.finance import claim_order
                     if not claim_order(f"{order.id}_bonus", "review_bonus"):
                         return
                     new_exp = rental["expire_time"] + 3600

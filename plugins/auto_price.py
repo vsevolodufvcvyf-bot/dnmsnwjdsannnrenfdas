@@ -10,11 +10,11 @@ from threading import Thread
 from FunPayAPI.common.enums import SubCategoryTypes
 from telebot.types import InlineKeyboardMarkup as K, InlineKeyboardButton as B, CallbackQuery, Message
 
-from plugins._common.bus import freeze, is_frozen, notify
-from plugins._common.db import get_db
-from plugins._common.panels import candidates_from_suppliers, min_sale_for_cost, quote_block
-from plugins._common.plugin_settings import SettingsPage
-from plugins._common.settings import ini_bool, is_dry_run, is_panic, load_ini, min_margin_mult, set_ini
+from shop_core.bus import freeze, is_frozen, notify
+from shop_core.db import get_db
+from shop_core.panels import candidates_from_suppliers, min_sale_for_cost, quote_block
+from shop_core.plugin_settings import SettingsPage
+from shop_core.settings import ini_bool, is_dry_run, is_panic, load_ini, min_margin_mult, set_ini
 
 logger = logging.getLogger("FPC.AutoPrice")
 
@@ -43,7 +43,7 @@ def _cfg():
         cfg.set("AutoPrice", "min_delta", "1")
         cfg.set("AutoPrice", "notify", "1")
         cfg.set("AutoPrice", "skip_seller_ids", "")
-        from plugins._common.settings import save_ini
+        from shop_core.settings import save_ini
         save_ini(CONFIG_FILE, cfg)
     return cfg["AutoPrice"]
 

@@ -8,13 +8,13 @@ from threading import Thread
 
 from telebot.types import InlineKeyboardMarkup as K, InlineKeyboardButton as B, CallbackQuery, Message
 
-from plugins._common.bus import bot_send, is_frozen, notify
-from plugins._common.confirm import (
+from shop_core.bus import bot_send, is_frozen, notify
+from shop_core.confirm import (
     ask_confirm, ask_target, handle_pending_message, parse_qty, parse_username, put_pending,
 )
-from plugins._common.panels import load_suppliers_cfg
-from plugins._common.plugin_settings import SettingsPage
-from plugins._common.settings import ini_bool, is_dry_run, is_panic, set_ini
+from shop_core.panels import load_suppliers_cfg
+from shop_core.plugin_settings import SettingsPage
+from shop_core.settings import ini_bool, is_dry_run, is_panic, set_ini
 
 logger = logging.getLogger("FPC.AutoStars")
 
@@ -164,7 +164,7 @@ def _ask_after_arm(cardinal, armed):
             )
             return
         if armed["mode"] == "queued":
-            from plugins._common.confirm import ask_queued
+            from shop_core.confirm import ask_queued
             ask_queued(cardinal, armed["chat_id"], armed["name"])
             return
         if armed["mode"] == "confirm":

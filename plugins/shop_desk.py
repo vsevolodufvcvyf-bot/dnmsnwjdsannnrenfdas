@@ -11,15 +11,15 @@ from threading import Thread
 
 from telebot.types import InlineKeyboardMarkup as K, InlineKeyboardButton as B, Message, CallbackQuery
 
-from plugins._common.bus import get_flag, is_frozen, notify, set_flag
-from plugins._common.db import get_db
-from plugins._common.panels import (
+from shop_core.bus import get_flag, is_frozen, notify, set_flag
+from shop_core.db import get_db
+from shop_core.panels import (
     PRESETS, apply_preset, load_suppliers_cfg, margin_report, next_section_name,
     panels_overview, save_supplier_section, test_panel,
 )
-from plugins._common.plugin_settings import SettingsPage
-from plugins._common.settings import is_dry_run, is_panic, min_margin_mult
-from plugins._common.team import (
+from shop_core.plugin_settings import SettingsPage
+from shop_core.settings import is_dry_run, is_panic, min_margin_mult
+from shop_core.team import (
     allowed_usernames, bootstrap, grant_operator, load_team, remember_id, save_team,
     team_text, username_allowed,
 )
@@ -273,7 +273,7 @@ def task_status_text(rid: int) -> str:
         return "Сейчас стоп или заморозка — к панели не обращаюсь."
     try:
         import requests
-        from plugins._common.finance import supplier_post
+        from shop_core.finance import supplier_post
         res = supplier_post(
             requests.post, url, {"key": key, "action": "status", "order": str(row["task_id"])}, timeout=12.0,
         )
@@ -293,7 +293,7 @@ def task_status_text(rid: int) -> str:
 
 
 def human_view() -> tuple[str, K]:
-    from plugins._common.bus import HUMAN_STALE_SEC, STATE_HUMAN_OPERATOR
+    from shop_core.bus import HUMAN_STALE_SEC, STATE_HUMAN_OPERATOR
     since = time.time() - HUMAN_STALE_SEC
     with get_db() as conn:
         rows = conn.execute(
@@ -347,7 +347,7 @@ def panel_text(section: str) -> str:
     b = cfg[section]
     url = (b.get("api_url") or "").strip()
     host = url.split("/")[2] if "://" in url else (url or "—")
-    from plugins._common.panels import mask_secret
+    from shop_core.panels import mask_secret
     on = "вкл" if b.getboolean("enabled", fallback=False) else "выкл"
     return (
         f"🔌 <b>{html.escape(section)}</b> · {on}\n"
@@ -552,7 +552,7 @@ def init_pre(cardinal):
             clear_wait(m.from_user.id)
             return
         if field == "url":
-            from plugins._common.panels import normalize_supplier_url
+            from shop_core.panels import normalize_supplier_url
             url = normalize_supplier_url(raw)
             if not url:
                 bot.send_message(
@@ -639,7 +639,7 @@ def init_pre(cardinal):
             bot.send_message(c.message.chat.id, text, reply_markup=kb, parse_mode="HTML")
             return
         if action == "rel" and len(parts) > 2 and parts[2].lstrip("-").isdigit():
-            from plugins._common.bus import release_chat
+            from shop_core.bus import release_chat
             release_chat(int(parts[2]))
             text, kb = human_view()
             bot.send_message(c.message.chat.id, "▶️ Чат вернул боту.\n\n" + text, reply_markup=kb, parse_mode="HTML")

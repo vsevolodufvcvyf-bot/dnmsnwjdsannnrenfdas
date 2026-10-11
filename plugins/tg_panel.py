@@ -12,9 +12,9 @@ from tg_bot.panel_ui import (
     BTN_APR, BTN_BAL, BTN_CHECK, BTN_DRY, BTN_HOME, BTN_MORE, BTN_OK, BTN_PANIC, BTN_PRICE, BTN_STATS, BTN_STOCK,
     home_kb, home_text, reply_keyboard, send_home,
 )
-from plugins._common.settings import is_dry_run, set_flag
-from plugins._common.plugin_settings import SettingsPage
-from plugins._common.bus import freeze, unfreeze
+from shop_core.settings import is_dry_run, set_flag
+from shop_core.plugin_settings import SettingsPage
+from shop_core.bus import freeze, unfreeze
 
 load_dotenv()
 
@@ -261,7 +261,7 @@ def init_post(cardinal):
     _auth_owner(cardinal)
     tg = getattr(cardinal, "telegram", None)
     try:
-        from plugins._common.team import bootstrap
+        from shop_core.team import bootstrap
         if tg:
             bootstrap(tg)
     except Exception as ex:

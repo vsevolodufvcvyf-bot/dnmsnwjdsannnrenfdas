@@ -11,10 +11,10 @@ from threading import Thread
 
 from telebot.types import InlineKeyboardMarkup as K, InlineKeyboardButton as B, Message, CallbackQuery
 
-from plugins._common.bus import get_flag, is_frozen, notify, set_flag
-from plugins._common.panels import load_suppliers_cfg
-from plugins._common.plugin_settings import SettingsPage
-from plugins._common.settings import is_dry_run, is_panic, min_margin_mult
+from shop_core.bus import get_flag, is_frozen, notify, set_flag
+from shop_core.panels import load_suppliers_cfg
+from shop_core.plugin_settings import SettingsPage
+from shop_core.settings import is_dry_run, is_panic, min_margin_mult
 
 logger = logging.getLogger("FPC.Clinic")
 
@@ -127,7 +127,7 @@ def scan(cardinal) -> tuple[list[str], list[str], list[str]]:
     else:
         warn.append("Папка mafiles пустая — автоаренда Steam не выдаст слот.")
     try:
-        from plugins._common.db import get_db
+        from shop_core.db import get_db
         with get_db() as conn:
             total = conn.execute("SELECT COUNT(*) AS n FROM mafile_rentals").fetchone()["n"]
             empty = conn.execute(
@@ -186,7 +186,7 @@ def scan(cardinal) -> tuple[list[str], list[str], list[str]]:
         pass
 
     try:
-        from plugins._common.settings import ini_bool as _ini
+        from shop_core.settings import ini_bool as _ini
         if _ini("configs/ai.cfg", "AI", "enabled", False):
             ya = bool(os.getenv("YANDEX_API_KEY", "").strip() or os.getenv("OPENROUTER_KEY", "").strip())
             if ya:

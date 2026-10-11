@@ -11,15 +11,15 @@ from threading import Thread, Timer
 from dotenv import load_dotenv
 from telebot.types import InlineKeyboardMarkup as K, InlineKeyboardButton as B
 
-from plugins._common.bus import (
+from shop_core.bus import (
     STATE_AI, STATE_WAITING_INPUT, bot_send, get_chat_state, is_chat_muted, is_frozen,
     is_human, mark_human, notify, remember_chat_alias, set_chat_mute, set_chat_state,
 )
-from plugins._common.confirm import get_pending
-from plugins._common.db import get_db
-from plugins._common.sanitizer import is_clean, sanitize_reason
-from plugins._common.settings import ini_bool, load_ai, load_ops, save_ai
-from plugins._common.plugin_settings import SettingsPage
+from shop_core.confirm import get_pending
+from shop_core.db import get_db
+from shop_core.sanitizer import is_clean, sanitize_reason
+from shop_core.settings import ini_bool, load_ai, load_ops, save_ai
+from shop_core.plugin_settings import SettingsPage
 
 load_dotenv()
 
@@ -268,7 +268,7 @@ def on_new_message(cardinal, event):
     if not msg or getattr(msg, "by_bot", False):
         return
     try:
-        from plugins._common.confirm import is_system_message
+        from shop_core.confirm import is_system_message
         if is_system_message(msg):
             return
     except Exception:

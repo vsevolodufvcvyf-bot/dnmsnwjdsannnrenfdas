@@ -7,13 +7,13 @@ import os
 import re
 from threading import Thread
 
-from plugins._common.bus import bot_send, notify
-from plugins._common.confirm import (
+from shop_core.bus import bot_send, notify
+from shop_core.confirm import (
     ask_confirm, ask_target, handle_pending_message, put_pending,
 )
-from plugins._common.panels import pick_cheapest, candidates_from_suppliers
-from plugins._common.settings import ini_bool, flip_ini
-from plugins._common.plugin_settings import SettingsPage
+from shop_core.panels import pick_cheapest, candidates_from_suppliers
+from shop_core.settings import ini_bool, flip_ini
+from shop_core.plugin_settings import SettingsPage
 
 logger = logging.getLogger("FPC.DigitalFulfill")
 
@@ -98,7 +98,7 @@ def _arm_order(cardinal, event):
 def _ask_after_arm(cardinal, armed):
     try:
         if armed["mode"] == "queued":
-            from plugins._common.confirm import ask_queued
+            from shop_core.confirm import ask_queued
             ask_queued(cardinal, armed["chat_id"], armed["name"])
             return
         if armed["mode"] == "confirm":

@@ -10,13 +10,13 @@ from threading import Thread
 
 import requests
 
-from plugins._common.bus import bot_send, notify
-from plugins._common.confirm import ask_target, handle_pending_message, put_pending
-from plugins._common.db import get_db
-from plugins._common.finance import claim_delivery, log_finance, preflight_or_abort, release_delivery, supplier_post
-from plugins._common.panels import candidates_from_suppliers, pick_cheapest
-from plugins._common.settings import is_dry_run, ini_bool, flip_ini
-from plugins._common.plugin_settings import SettingsPage
+from shop_core.bus import bot_send, notify
+from shop_core.confirm import ask_target, handle_pending_message, put_pending
+from shop_core.db import get_db
+from shop_core.finance import claim_delivery, log_finance, preflight_or_abort, release_delivery, supplier_post
+from shop_core.panels import candidates_from_suppliers, pick_cheapest
+from shop_core.settings import is_dry_run, ini_bool, flip_ini
+from shop_core.plugin_settings import SettingsPage
 
 logger = logging.getLogger("FPC.AutoSMM")
 
@@ -143,11 +143,11 @@ def _ask_smm(cardinal, matched):
     try:
         chat_id = matched["chat_id"]
         if matched.get("queue") == "queued":
-            from plugins._common.confirm import ask_queued
+            from shop_core.confirm import ask_queued
             ask_queued(cardinal, chat_id)
             return
         if matched["target_link"]:
-            from plugins._common.confirm import ask_confirm
+            from shop_core.confirm import ask_confirm
             ask_confirm(cardinal, chat_id, "smm", matched["target_link"])
         else:
             bot_send(cardinal, chat_id, "Заказ накрутки принят.")
@@ -264,6 +264,9 @@ def on_smm_message(cardinal, event):
 
 
 def init_settings(cardinal):
+    from shop_core import hooks
+    hooks.subscribe("smm_candidates", smm_panel_candidates)
+
     def status():
         cfg = load_smm_config()
         url = cfg["Settings"].get("api_url", "—") if cfg.has_section("Settings") else "—"

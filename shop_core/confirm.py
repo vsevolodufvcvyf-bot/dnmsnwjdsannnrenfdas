@@ -7,14 +7,14 @@ import logging
 import re
 import time
 
-from plugins._common.bus import (
+from shop_core.bus import (
     STATE_WAITING_INPUT, bind_order_chat, bot_send, notify, peer_ids, release_chat,
     set_chat_mute, set_chat_state,
 )
-from plugins._common.db import get_db
-from plugins._common.finance import claim_delivery, log_finance, preflight_or_abort, release_delivery, supplier_post
-from plugins._common.panels import budget_panels, candidates_from_suppliers
-from plugins._common.settings import is_dry_run
+from shop_core.db import get_db
+from shop_core.finance import claim_delivery, log_finance, preflight_or_abort, release_delivery, supplier_post
+from shop_core.panels import budget_panels, candidates_from_suppliers
+from shop_core.settings import is_dry_run
 
 logger = logging.getLogger("FPC.Confirm")
 
@@ -287,7 +287,7 @@ def _ask_next(cardinal, chat_id, pending: dict, chat_name: str | None = None) ->
 
 def resume_pending(cardinal) -> int:
     """После снятия стопа: по каждому чату снова задаём вопрос по самому старому заказу."""
-    from plugins._common.bus import is_frozen
+    from shop_core.bus import is_frozen
     if cardinal is None or is_frozen():
         return 0
     now = time.time()
@@ -393,11 +393,8 @@ def deliver_via_panel(cardinal, kind: str, order_id: str, chat_id, payload: str,
     cands = candidates_from_suppliers(query)
     if kind == "smm":
         cands = [c for c in cands if "smm" in (c.get("section") or "").lower() or c.get("plugin_name") == "autosmm"]
-        try:
-            from plugins.autosmm import smm_panel_candidates
-            cands.extend(smm_panel_candidates(service_id))
-        except Exception as ex:
-            logger.debug("[Confirm] autosmm.cfg: %s", ex)
+        from shop_core import hooks
+        cands.extend(hooks.collect("smm_candidates", service_id))
     elif kind == "stars":
         cands = [c for c in cands if "star" in (c.get("section") or "").lower() or "звезд" in (c.get("keywords") or "").lower()]
         if not cands:

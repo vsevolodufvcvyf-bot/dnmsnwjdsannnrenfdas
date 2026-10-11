@@ -5,10 +5,10 @@ import logging
 import time
 
 from FunPayAPI.common.enums import OrderStatuses
-from plugins._common.bus import can_spend_money, notify
-from plugins._common.db import get_db
-from plugins._common.rate_limit import SUPPLIER_BUCKET
-from plugins._common.settings import commission, is_dry_run
+from shop_core.bus import can_spend_money, notify
+from shop_core.db import get_db
+from shop_core.rate_limit import SUPPLIER_BUCKET
+from shop_core.settings import commission, is_dry_run
 
 logger = logging.getLogger("FPC.Finance")
 
@@ -115,7 +115,7 @@ def preflight_or_abort(cardinal, order_id: str, plugin_name: str) -> tuple[bool,
     ok, why = can_spend_money()
     if not ok:
         return False, why
-    from plugins._common.settings import load_ops
+    from shop_core.settings import load_ops
     if not load_ops().getboolean("Ops", "preflight_enabled", fallback=True):
         return True, "skip"
     state, detail = order_pay_state(cardinal, order_id)
@@ -129,7 +129,7 @@ def preflight_or_abort(cardinal, order_id: str, plugin_name: str) -> tuple[bool,
 
 
 def margin_ok(sale_price: float, cost: float) -> bool:
-    from plugins._common.settings import min_margin_mult
+    from shop_core.settings import min_margin_mult
     net = float(sale_price or 0) * (1.0 - commission())
     need = float(cost or 0) * min_margin_mult()
     return net + 1e-9 >= need

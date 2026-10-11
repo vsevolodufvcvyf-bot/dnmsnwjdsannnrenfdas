@@ -8,8 +8,8 @@ import threading
 import time
 from typing import Any
 
-from plugins._common.db import get_db
-from plugins._common.settings import is_dry_run, is_panic, load_ops
+from shop_core.db import get_db
+from shop_core.settings import is_dry_run, is_panic, load_ops
 
 logger = logging.getLogger("FPC.Bus")
 _USERS_RE = re.compile(r"^users-(\d+)-(\d+)$", re.I)
@@ -82,15 +82,12 @@ def unfreeze() -> None:
 
     def _resume():
         try:
-            from plugins._common.confirm import resume_pending
+            from shop_core.confirm import resume_pending
             resume_pending(_CARDINAL)
         except Exception as ex:
             logger.warning("[Bus] resume_pending: %s", ex)
-        try:
-            from plugins.steam_autorent_mafile import resume_parked_rentals
-            resume_parked_rentals(_CARDINAL)
-        except Exception as ex:
-            logger.warning("[Bus] resume rentals: %s", ex)
+        from shop_core import hooks
+        hooks.emit("on_unfreeze", _CARDINAL)
 
     threading.Thread(target=_resume, daemon=True).start()
 

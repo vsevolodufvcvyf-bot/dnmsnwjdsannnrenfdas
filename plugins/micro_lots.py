@@ -7,7 +7,7 @@ import os
 
 from telebot.types import InlineKeyboardMarkup as K, InlineKeyboardButton as B, CallbackQuery, Message
 
-from plugins._common.plugin_settings import SettingsPage
+from shop_core.plugin_settings import SettingsPage
 
 logger = logging.getLogger("FPC.MicroLots")
 

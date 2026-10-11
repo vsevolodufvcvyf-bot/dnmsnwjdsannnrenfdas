@@ -11,8 +11,8 @@ from typing import Any
 
 import requests
 
-from plugins._common.finance import supplier_post
-from plugins._common.settings import commission, min_margin_mult, usd_rub
+from shop_core.finance import supplier_post
+from shop_core.settings import commission, min_margin_mult, usd_rub
 
 logger = logging.getLogger("FPC.Panels")
 SUPPLIERS_FILE = os.path.join("configs", "suppliers.cfg")

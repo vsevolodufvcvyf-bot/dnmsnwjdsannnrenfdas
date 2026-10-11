@@ -601,8 +601,8 @@ def deliver_goods(c: Cardinal, e: NewOrderEvent, *args):
         setattr(e, "goods_delivered", amount)
         setattr(e, "goods_left", goods_left)
         try:
-            from plugins._common.finance import log_finance
-            from plugins._common.settings import commission
+            from shop_core.finance import log_finance
+            from shop_core.settings import commission
             sale = float(getattr(e.order, "price", 0) or getattr(e.order, "sum", 0) or 0)
             log_finance(str(e.order.id), "autodelivery", sale, sale * commission())
         except Exception:
@@ -662,7 +662,7 @@ def update_current_lots(c: Cardinal, e: NewOrderEvent):
         except exceptions.AccountBlockedError as err:
             logger.error(str(err))
             try:
-                from plugins._common.bus import freeze
+                from shop_core.bus import freeze
                 freeze("FunPay заблокировал аккаунт. Витрина и продажи недоступны.", c)
             except Exception:
                 logger.debug("TRACEBACK", exc_info=True)

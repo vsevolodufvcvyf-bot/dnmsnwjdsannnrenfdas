@@ -9,14 +9,14 @@ import time
 from datetime import datetime
 from threading import Thread
 
-from plugins._common import logging_redact
-from plugins._common.bus import (
+from shop_core import logging_redact
+from shop_core.bus import (
     MSG_ORIGIN, bind_cardinal, drain_digest, freeze, hydrate, is_frozen, mark_human,
     notify, quiet_hours_now, release_chat, unfreeze,
 )
-from plugins._common.db import DB_FILE, get_db
-from plugins._common.settings import is_dry_run, is_panic, load_ops, min_margin_mult, set_flag
-from plugins._common.plugin_settings import SettingsPage
+from shop_core.db import DB_FILE, get_db
+from shop_core.settings import is_dry_run, is_panic, load_ops, min_margin_mult, set_flag
+from shop_core.plugin_settings import SettingsPage
 
 logger = logging.getLogger("FPC.OpsCore")
 

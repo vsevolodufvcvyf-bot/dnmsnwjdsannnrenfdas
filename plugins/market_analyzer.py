@@ -13,9 +13,9 @@ from html import escape
 from FunPayAPI.common.enums import SubCategoryTypes
 from telebot.types import InlineKeyboardMarkup as K, InlineKeyboardButton as B, Message, CallbackQuery
 
-from plugins._common.settings import commission
-from plugins._common.plugin_settings import SettingsPage
-from plugins._common.panels import margin_report
+from shop_core.settings import commission
+from shop_core.plugin_settings import SettingsPage
+from shop_core.panels import margin_report
 
 logger = logging.getLogger("FPC.MarketAnalyzer")
 

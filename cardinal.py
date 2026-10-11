@@ -223,7 +223,7 @@ class Cardinal(object):
                 from Utils.console_ui import print_block
                 print_block(greeting_text)
                 try:
-                    from plugins._common.bus import get_flag, set_flag, unfreeze
+                    from shop_core.bus import get_flag, set_flag, unfreeze
                     if get_flag("unfreeze_after_start") == "1":
                         unfreeze()
                         set_flag("unfreeze_after_start", "0")
@@ -263,7 +263,7 @@ class Cardinal(object):
 
     def __freeze_blocked(self) -> None:
         try:
-            from plugins._common.bus import freeze
+            from shop_core.bus import freeze
             freeze("FunPay заблокировал аккаунт. Витрина и продажи недоступны.", self)
         except Exception:
             logger.debug("TRACEBACK", exc_info=True)
@@ -678,6 +678,19 @@ class Cardinal(object):
                 break
             self.run_handlers(events_handlers[event.type], (self, event))
 
+    @staticmethod
+    def _raise_gate() -> tuple[bool, str, int]:
+        """Можно ли поднимать сейчас (плагин часов поднятия регистрирует hook "raise_gate")."""
+        from shop_core import hooks
+        gate = hooks.get("raise_gate")
+        if gate is None:
+            return True, "", 0
+        try:
+            return gate()
+        except Exception:
+            logger.debug("TRACEBACK", exc_info=True)
+            return True, "", 0
+
     def lots_raise_loop(self):
         """
         Запускает бесконечный цикл поднятия категорий (если autoRaise в _main.cfg == 1).
@@ -697,7 +710,7 @@ class Cardinal(object):
                     continue
                 waiting_lots = False
                 try:
-                    from plugins._common.bus import is_frozen
+                    from shop_core.bus import is_frozen
                     if is_frozen():
                         time.sleep(30)
                         continue
@@ -706,11 +719,7 @@ class Cardinal(object):
                 if not self.MAIN_CFG["FunPay"].getboolean("autoRaise"):
                     time.sleep(10)
                     continue
-                try:
-                    from plugins.raise_clock import raise_decision
-                    ok_hour, why_hour, wait_hour = raise_decision()
-                except Exception:
-                    ok_hour, why_hour, wait_hour = True, "", 0
+                ok_hour, why_hour, wait_hour = self._raise_gate()
                 if not ok_hour:
                     if getattr(self, "_raise_skip_why", None) != why_hour:
                         logger.info("[RaiseClock] %s", why_hour)
@@ -725,22 +734,18 @@ class Cardinal(object):
                     if not self.MAIN_CFG["FunPay"].getboolean("autoRaise"):
                         break
                     try:
-                        from plugins._common.bus import is_frozen
-                        from plugins._common.settings import is_panic
+                        from shop_core.bus import is_frozen
+                        from shop_core.settings import is_panic
                         if is_frozen() or is_panic():
                             break
                     except Exception:
                         pass
-                    try:
-                        from plugins.raise_clock import raise_decision
-                        ok_wait, why_wait, _wait = raise_decision()
-                        if not ok_wait:
-                            if getattr(self, "_raise_skip_why", None) != why_wait:
-                                logger.info("[RaiseClock] %s", why_wait)
-                                self._raise_skip_why = why_wait
-                            break
-                    except Exception:
-                        pass
+                    ok_wait, why_wait, _wait = self._raise_gate()
+                    if not ok_wait:
+                        if getattr(self, "_raise_skip_why", None) != why_wait:
+                            logger.info("[RaiseClock] %s", why_wait)
+                            self._raise_skip_why = why_wait
+                        break
                     step = 5 if left > 5 else left
                     time.sleep(step)
                     left -= step
@@ -757,7 +762,7 @@ class Cardinal(object):
         while True:
             time.sleep(sleep_time)
             try:
-                from plugins._common.bus import is_frozen
+                from shop_core.bus import is_frozen
                 if is_frozen():
                     sleep_time = 600
                     continue
@@ -811,7 +816,7 @@ class Cardinal(object):
         self.__init_account()
         self.runner = FunPayAPI.Runner(self.account, self.old_mode_enabled)
         try:
-            from plugins._common.bus import is_frozen
+            from shop_core.bus import is_frozen
             self.runner.should_pause = is_frozen
         except Exception:
             pass

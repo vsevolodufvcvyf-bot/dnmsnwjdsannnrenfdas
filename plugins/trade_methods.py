@@ -10,11 +10,11 @@ from dataclasses import dataclass
 
 from telebot.types import InlineKeyboardMarkup as K, InlineKeyboardButton as B, CallbackQuery, Message
 
-from plugins._common.panels import (
+from shop_core.panels import (
     candidates_from_suppliers, load_suppliers_cfg, min_sale_for_cost, pick_cheapest,
 )
-from plugins._common.plugin_settings import SettingsPage
-from plugins._common.settings import min_margin_mult
+from shop_core.plugin_settings import SettingsPage
+from shop_core.settings import min_margin_mult
 
 logger = logging.getLogger("FPC.TradeMethods")
 

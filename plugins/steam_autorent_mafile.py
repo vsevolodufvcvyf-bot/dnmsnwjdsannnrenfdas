@@ -13,11 +13,11 @@ import logging
 from threading import Thread
 from telebot.types import InlineKeyboardMarkup as K, InlineKeyboardButton as B
 
-from plugins._common.bus import as_chat_id, bind_order_chat, bot_send, is_frozen, notify
-from plugins._common.db import get_db
-from plugins._common.finance import claim_delivery, claim_order, release_delivery
-from plugins._common.settings import is_dry_run, is_panic, ini_bool, flip_ini
-from plugins._common.plugin_settings import SettingsPage
+from shop_core.bus import as_chat_id, bind_order_chat, bot_send, is_frozen, notify
+from shop_core.db import get_db
+from shop_core.finance import claim_delivery, claim_order, release_delivery
+from shop_core.settings import is_dry_run, is_panic, ini_bool, flip_ini
+from shop_core.plugin_settings import SettingsPage
 
 logger = logging.getLogger("FPC.AutoRent")
 
@@ -279,7 +279,7 @@ _PARK_KEY = "autorent_paused"
 
 
 def _parked() -> dict:
-    from plugins._common.bus import get_flag
+    from shop_core.bus import get_flag
     try:
         data = json.loads(get_flag(_PARK_KEY, "{}") or "{}")
         return data if isinstance(data, dict) else {}
@@ -288,7 +288,7 @@ def _parked() -> dict:
 
 
 def _park_rental(order, desc: str) -> None:
-    from plugins._common.bus import set_flag
+    from shop_core.bus import set_flag
     data = _parked()
     data[str(getattr(order, "id", ""))] = {
         "description": desc,
@@ -304,8 +304,8 @@ def _park_rental(order, desc: str) -> None:
 def resume_parked_rentals(cardinal) -> int:
     """После снятия стопа: только оплаченные заказы идут в обычную выдачу, остальные — продавцу."""
     from types import SimpleNamespace
-    from plugins._common.bus import set_flag
-    from plugins._common.finance import order_pay_state
+    from shop_core.bus import set_flag
+    from shop_core.finance import order_pay_state
     if is_frozen() or is_panic():
         return 0
     data = _parked()
@@ -447,8 +447,8 @@ def _handle_new_rental_order(cardinal, event):
             return
 
         try:
-            from plugins._common.finance import log_finance
-            from plugins._common.settings import commission
+            from shop_core.finance import log_finance
+            from shop_core.settings import commission
             sale = float(getattr(order, "price", 0) or getattr(order, "sum", 0) or 0)
             log_finance(str(order_id), "autorent", sale, sale * commission())
         except Exception as ex:
@@ -575,6 +575,8 @@ def on_msg_guard(cardinal, event):
     Thread(target=_handle_guard_msg, args=(cardinal, event), daemon=True).start()
 
 def init_settings(cardinal):
+    from shop_core import hooks
+    hooks.subscribe("on_unfreeze", resume_parked_rentals)
     seed_accounts_if_empty()
     def status():
         now = time.time()

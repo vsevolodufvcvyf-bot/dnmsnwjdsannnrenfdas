@@ -24,7 +24,7 @@ class SettingsPage:
         self.toggles: list[tuple[str, str, Callable[[], bool], Callable[[bool], None]]] = []
         self.status_fn: Callable[[], str] | None = None
         try:
-            from plugins._common.howto import for_uuid
+            from shop_core.howto import for_uuid
             self.howto = for_uuid(uuid)
         except Exception:
             self.howto = ""

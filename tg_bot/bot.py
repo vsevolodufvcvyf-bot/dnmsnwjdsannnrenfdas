@@ -276,7 +276,7 @@ class TGBot:
         if m.from_user.id in self.authorized_users:
             return
         try:
-            from plugins._common.team import try_authorize_message
+            from shop_core.team import try_authorize_message
             try_authorize_message(self, m)
         except Exception:
             logger.debug("TRACEBACK", exc_info=True)
@@ -294,7 +294,7 @@ class TGBot:
             utils.save_notification_settings(self.notification_settings)
             return
         elif str(m.chat.id) not in self.notification_settings:
-            from plugins._common.team import ensure_operator_notifications
+            from shop_core.team import ensure_operator_notifications
             ensure_operator_notifications(self, m.chat.id)
 
     def reg_admin(self, m: Message):
@@ -305,7 +305,7 @@ class TGBot:
         if m.chat.type != "private" or (self.attempts.get(m.from_user.id, 0) >= 5) or m.text is None:
             return
         try:
-            from plugins._common.team import try_authorize_message
+            from shop_core.team import try_authorize_message
             if try_authorize_message(self, m):
                 self.send_notification(
                     text=_("access_granted_notification", m.from_user.username, m.from_user.id),
@@ -325,7 +325,7 @@ class TGBot:
             utils.save_authorized_users(self.authorized_users)
             if str(m.chat.id) not in self.notification_settings or not self.is_notification_enabled(m.chat.id,
                                                                                                     NotificationTypes.critical):
-                from plugins._common.team import ensure_operator_notifications
+                from shop_core.team import ensure_operator_notifications
                 ensure_operator_notifications(self, m.chat.id)
             text = _("access_granted", language=lang)
             kb_links = None
@@ -342,7 +342,7 @@ class TGBot:
         Игнорирует callback'и от не авторизированных пользователей.
         """
         try:
-            from plugins._common.team import extra_ids, grant_operator, username_allowed
+            from shop_core.team import extra_ids, grant_operator, username_allowed
             uname = getattr(c.from_user, "username", None)
             if c.from_user.id in extra_ids() or username_allowed(uname):
                 grant_operator(self, c.from_user.id, uname)
@@ -426,7 +426,7 @@ class TGBot:
         self.cardinal.MAIN_CFG.set("FunPay", "golden_key", golden_key)
         self.cardinal.save_config(self.cardinal.MAIN_CFG, "configs/_main.cfg")
         try:
-            from plugins._common.bus import set_flag, unfreeze
+            from shop_core.bus import set_flag, unfreeze
             if one_acc:
                 unfreeze()
             else:

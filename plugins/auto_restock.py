@@ -8,12 +8,12 @@ import os
 import time
 from threading import Thread
 
-from plugins._common.bus import notify, is_frozen
-from plugins._common.db import get_db
-from plugins._common.finance import supplier_post
-from plugins._common.panels import candidates_from_suppliers, pick_cheapest
-from plugins._common.plugin_settings import SettingsPage
-from plugins._common.settings import is_dry_run, is_panic, ini_bool, set_ini
+from shop_core.bus import notify, is_frozen
+from shop_core.db import get_db
+from shop_core.finance import supplier_post
+from shop_core.panels import candidates_from_suppliers, pick_cheapest
+from shop_core.plugin_settings import SettingsPage
+from shop_core.settings import is_dry_run, is_panic, ini_bool, set_ini
 from Utils.cardinal_tools import count_products
 
 logger = logging.getLogger("FPC.AutoRestock")
