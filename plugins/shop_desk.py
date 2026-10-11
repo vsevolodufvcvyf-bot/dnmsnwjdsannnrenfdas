@@ -121,7 +121,7 @@ def health_text(cardinal) -> str:
         old_mode = cfg.getboolean("FunPay", "oldMsgGetMode") if cfg else False
         key_ok = bool((cfg["FunPay"].get("golden_key") or "").strip()) if cfg else False
     except Exception:
-        pass
+        logger.debug("TRACEBACK", exc_info=True)
     freeze_on = is_frozen()
     reason = html.escape(str(get_flag("freeze_reason", "") or "—"))
     if freeze_on:
@@ -184,7 +184,7 @@ def day_text(cardinal) -> str:
                 empty_stock += 1
                 stock_lines.append(f"• {r['lot']}: {cnt} шт.")
     except Exception:
-        pass
+        logger.debug("TRACEBACK", exc_info=True)
     lines = [
         "☀️ <b>Отчёт за сутки</b>",
         health_text(cardinal),
@@ -478,7 +478,7 @@ def init_pre(cardinal):
             try:
                 bot.send_message(int(raw), "✅ Тебя добавили в пульт nnanserShop. Нажми /menu.")
             except Exception:
-                pass
+                logger.debug("TRACEBACK", exc_info=True)
             return
         if not invite_username(raw):
             bot.send_message(m.chat.id, "Это не похоже на ник Telegram. Пример: <code>/op @username</code>", parse_mode="HTML")
@@ -501,13 +501,13 @@ def init_pre(cardinal):
             if tg.get_state(m.chat.id, m.from_user.id):
                 return False
         except Exception:
-            pass
+            logger.debug("TRACEBACK", exc_info=True)
         try:
             from plugins.market_analyzer import _WAIT as MWAIT
             if m.from_user.id in MWAIT:
                 return False
         except Exception:
-            pass
+            logger.debug("TRACEBACK", exc_info=True)
         return True
 
     @bot.message_handler(func=_is_wiz_text)
@@ -597,7 +597,7 @@ def init_pre(cardinal):
         try:
             bot.answer_callback_query(c.id)
         except Exception:
-            pass
+            logger.debug("TRACEBACK", exc_info=True)
 
         if action in ("wiz", "home"):
             try:
@@ -638,7 +638,7 @@ def init_pre(cardinal):
                 from tg_bot.panel_ui import clear_all_waits
                 clear_all_waits(c.from_user.id)
             except Exception:
-                pass
+                logger.debug("TRACEBACK", exc_info=True)
             kind = parts[2] if parts[2] in PRESETS else "other"
             if kind == "other":
                 _WIZ[c.from_user.id] = {"section": "", "field": "name", "kind": "other"}
@@ -676,7 +676,7 @@ def init_pre(cardinal):
                 from tg_bot.panel_ui import clear_all_waits
                 clear_all_waits(c.from_user.id)
             except Exception:
-                pass
+                logger.debug("TRACEBACK", exc_info=True)
             section, field = parts[2], parts[3]
             _WIZ[c.from_user.id] = {"section": section, "field": field}
             prompts = {

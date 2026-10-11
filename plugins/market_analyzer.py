@@ -49,7 +49,7 @@ def ask_price(bot, chat_id: int, uid: int) -> None:
         from tg_bot.panel_ui import clear_all_waits
         clear_all_waits(uid)
     except Exception:
-        pass
+        logger.debug("TRACEBACK", exc_info=True)
     _WAIT[int(uid)] = {"mode": "desc"}
     bot.send_message(
         chat_id,
@@ -325,7 +325,7 @@ def analyze(cardinal, subcategory_id: int, lot_type: str, our_cost: float, under
         if extra:
             text += extra
     except Exception:
-        pass
+        logger.debug("TRACEBACK", exc_info=True)
     return text
 
 
@@ -388,12 +388,12 @@ def init_post(cardinal):
             if text in all_reply_labels():
                 return False
         except Exception:
-            pass
+            logger.debug("TRACEBACK", exc_info=True)
         try:
             if tg.get_state(m.chat.id, m.from_user.id):
                 return False
         except Exception:
-            pass
+            logger.debug("TRACEBACK", exc_info=True)
         return True
 
     @bot.message_handler(func=_is_wait_text)
@@ -455,7 +455,7 @@ def init_post(cardinal):
             try:
                 bot.answer_callback_query(c.id, "Ок")
             except Exception:
-                pass
+                logger.debug("TRACEBACK", exc_info=True)
             return
         if parts[1] != "c" or len(parts) < 3:
             return
@@ -472,7 +472,7 @@ def init_post(cardinal):
         try:
             bot.answer_callback_query(c.id, "Смотрю витрину…")
         except Exception:
-            pass
+            logger.debug("TRACEBACK", exc_info=True)
         try:
             text = analyze_query(cardinal, sc, query, 0, 0)
         except Exception as ex:

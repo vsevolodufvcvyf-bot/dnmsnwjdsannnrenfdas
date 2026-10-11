@@ -201,7 +201,7 @@ def init_pre(cardinal):
         try:
             bot.answer_callback_query(c.id)
         except Exception:
-            pass
+            logger.debug("TRACEBACK", exc_info=True)
         if action == "tog":
             set_ini(CONFIG_FILE, "gifts", "enabled", "0" if _enabled() else "1")
         if action == "test":

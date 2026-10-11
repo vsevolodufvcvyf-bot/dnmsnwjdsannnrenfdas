@@ -456,12 +456,12 @@ def init_post(cardinal):
             if text in all_reply_labels():
                 return False
         except Exception:
-            pass
+            logger.debug("TRACEBACK", exc_info=True)
         try:
             if tg.get_state(m.chat.id, m.from_user.id):
                 return False
         except Exception:
-            pass
+            logger.debug("TRACEBACK", exc_info=True)
         return True
 
     @bot.message_handler(func=_is_wal_text)
@@ -487,7 +487,7 @@ def init_post(cardinal):
             try:
                 bot.delete_message(m.chat.id, m.id)
             except Exception:
-                pass
+                logger.debug("TRACEBACK", exc_info=True)
             st["mode"] = "sum"
             _WAIT[m.from_user.id] = st
             mn = withdraw_min_rub()
@@ -539,7 +539,7 @@ def init_post(cardinal):
         try:
             bot.answer_callback_query(c.id)
         except Exception:
-            pass
+            logger.debug("TRACEBACK", exc_info=True)
         if action == "x":
             clear_wait(c.from_user.id)
             bot.send_message(c.message.chat.id, "Вывод отменён.")

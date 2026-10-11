@@ -198,7 +198,7 @@ def init_pre(cardinal):
                 parse_mode="HTML",
             )
         except Exception:
-            pass
+            logger.debug("TRACEBACK", exc_info=True)
 
     @bot.callback_query_handler(func=lambda c: (c.data or "").startswith("PANEL:"))
     def _cb(c: CallbackQuery):
@@ -254,7 +254,7 @@ def init_pre(cardinal):
         try:
             bot.answer_callback_query(c.id)
         except Exception:
-            pass
+            logger.debug("TRACEBACK", exc_info=True)
 
 
 def init_post(cardinal):

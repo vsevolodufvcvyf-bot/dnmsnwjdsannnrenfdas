@@ -353,7 +353,7 @@ def init_pre(cardinal):
         try:
             bot.answer_callback_query(c.id)
         except Exception:
-            pass
+            logger.debug("TRACEBACK", exc_info=True)
         if len(parts) < 2 or parts[1] == "hub":
             bot.send_message(c.message.chat.id, hub_text(), reply_markup=hub_kb(), parse_mode="HTML")
             return

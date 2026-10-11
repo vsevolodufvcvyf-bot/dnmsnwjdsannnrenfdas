@@ -173,7 +173,7 @@ def stock_text(cardinal) -> str:
         free = total - busy
         lines.append(f"\n🎮 Steam-аренда: свободно <b>{free}</b> · занято <b>{busy}</b> · всего {total}")
     except Exception:
-        pass
+        logger.debug("TRACEBACK", exc_info=True)
     on = cfg.get("enabled", "1") in ("1", "true", "yes", "on")
     lines.append("")
     lines.append("🔁 Автопополнение: <b>вкл</b>" if on else "🔁 Автопополнение: выкл")

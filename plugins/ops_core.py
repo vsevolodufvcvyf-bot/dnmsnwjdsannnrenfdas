@@ -67,7 +67,7 @@ def _install_watchdog(cardinal) -> None:
         except RuntimeError:
             raise
         except Exception:
-            pass
+            logger.debug("TRACEBACK", exc_info=True)
         return resp
 
     account.method = wrapped
@@ -80,7 +80,7 @@ def _install_watchdog(cardinal) -> None:
             try:
                 mark_human(chat_id)
             except Exception:
-                pass
+                logger.debug("TRACEBACK", exc_info=True)
         if origin == "bot":
             watermark = False
         return orig_send(chat_id, message_text, chat_name, interlocutor_id, attempts, watermark)

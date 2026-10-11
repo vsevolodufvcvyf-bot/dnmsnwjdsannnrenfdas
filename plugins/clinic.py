@@ -55,14 +55,13 @@ def parse_issue_lines(now: float | None = None, window: float = 86400) -> list[s
 def scan(cardinal) -> tuple[list[str], list[str], list[str]]:
     """ok, warn, critical — без секретов."""
     ok, warn, bad = [], [], []
-    acc = getattr(cardinal, "account", None)
     cfg = getattr(cardinal, "MAIN_CFG", None)
 
     key_ok = False
     try:
         key_ok = bool((cfg["FunPay"].get("golden_key") or "").strip()) if cfg else False
     except Exception:
-        pass
+        logger.debug("TRACEBACK", exc_info=True)
     if key_ok:
         ok.append("Сессия FunPay: ключ на месте")
     else:
@@ -117,13 +116,13 @@ def scan(cardinal) -> tuple[list[str], list[str], list[str]]:
     try:
         ad_on = cfg.getboolean("FunPay", "autoDelivery") if cfg else False
     except Exception:
-        pass
+        logger.debug("TRACEBACK", exc_info=True)
     ad_n = 0
     try:
         ad = getattr(cardinal, "AD_CFG", None)
         ad_n = len(ad.sections()) if ad else 0
     except Exception:
-        pass
+        logger.debug("TRACEBACK", exc_info=True)
     if ad_on and ad_n:
         ok.append(f"Автовыдача включена, лотов в конфиге: {ad_n}")
     elif ad_n and not ad_on:
@@ -210,12 +209,12 @@ def scan(cardinal) -> tuple[list[str], list[str], list[str]]:
         elif st.get("enabled"):
             warn.append("AutoStars включён, но в панели Stars нет URL/ключа/service_id.")
     except Exception:
-        pass
+        logger.debug("TRACEBACK", exc_info=True)
     try:
         from plugins.raise_clock import status_line
         ok.append(status_line())
     except Exception:
-        pass
+        logger.debug("TRACEBACK", exc_info=True)
 
     try:
         from plugins.auto_price import _enabled as _apr_on
@@ -224,7 +223,7 @@ def scan(cardinal) -> tuple[list[str], list[str], list[str]]:
         else:
             warn.append("Автоцена выкл — лоты сами под рынок не подстроятся.")
     except Exception:
-        pass
+        logger.debug("TRACEBACK", exc_info=True)
 
     try:
         from shop_core.settings import ini_bool as _ini
@@ -235,7 +234,7 @@ def scan(cardinal) -> tuple[list[str], list[str], list[str]]:
             else:
                 warn.append("ИИ включён, но нет YANDEX_API_KEY / OPENROUTER_KEY в .env — отвечает шаблонами.")
     except Exception:
-        pass
+        logger.debug("TRACEBACK", exc_info=True)
     return ok, warn, bad
 
 
@@ -323,7 +322,7 @@ def init_pre(cardinal):
         try:
             bot.answer_callback_query(c.id)
         except Exception:
-            pass
+            logger.debug("TRACEBACK", exc_info=True)
         action = (c.data or "").split(":")[1] if ":" in (c.data or "") else "run"
         if action == "how":
             bot.send_message(c.message.chat.id, how_index(), reply_markup=how_kb(), parse_mode="HTML")

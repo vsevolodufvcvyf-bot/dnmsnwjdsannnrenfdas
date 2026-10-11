@@ -224,7 +224,7 @@ def request_approval(tg, user_id: int, username: str | None) -> bool:
     try:
         bot.send_message(int(user_id), "Запрос отправлен владельцу. Когда он подтвердит, нажми /menu.")
     except Exception:
-        pass
+        logger.debug("TRACEBACK", exc_info=True)
     logger.info("[Team] запрос доступа от %s (@%s) отправлен владельцу", user_id, username or "—")
     return True
 
@@ -248,7 +248,7 @@ def handle_decision(tg, c) -> None:
         try:
             bot.send_message(uid, "✅ Доступ к пульту открыт. Нажми /menu.")
         except Exception:
-            pass
+            logger.debug("TRACEBACK", exc_info=True)
     else:
         result = f"❌ Отказано: @{html.escape(nick) or uid} (ID <code>{uid}</code>)."
     bot.answer_callback_query(c.id)

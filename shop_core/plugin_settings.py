@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import html
+import logging
 from typing import Callable
 
 from telebot.types import InlineKeyboardMarkup as K, InlineKeyboardButton as B
 
 from tg_bot import CBT
 
+logger = logging.getLogger("FPC.PluginSettings")
 _ATTACHED: set[str] = set()
 
 
@@ -90,7 +92,7 @@ class SettingsPage:
             try:
                 tg.bot.answer_callback_query(c.id)
             except Exception:
-                pass
+                logger.debug("TRACEBACK", exc_info=True)
 
         def on_toggle(c):
             parts = (c.data or "").split(":")
@@ -105,13 +107,13 @@ class SettingsPage:
                 try:
                     setter(not bool(getter()))
                 except Exception:
-                    pass
+                    logger.debug("TRACEBACK", exc_info=True)
                 break
             page._render(cardinal, offset, c)
             try:
                 tg.bot.answer_callback_query(c.id, "Сохранено")
             except Exception:
-                pass
+                logger.debug("TRACEBACK", exc_info=True)
 
         def show_howto(c):
             parts = (c.data or "").split(":")
@@ -122,7 +124,7 @@ class SettingsPage:
             try:
                 tg.bot.answer_callback_query(c.id)
             except Exception:
-                pass
+                logger.debug("TRACEBACK", exc_info=True)
             tg.bot.send_message(c.message.chat.id, text, parse_mode="HTML")
 
         tg.cbq_handler(open_page, lambda c: (c.data or "").startswith(f"{CBT.PLUGIN_SETTINGS}:{self.uuid}"))

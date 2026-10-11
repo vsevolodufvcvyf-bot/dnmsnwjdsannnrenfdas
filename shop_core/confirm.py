@@ -272,7 +272,7 @@ def pop_pending(chat_id, cardinal=None, order_id: str | None = None) -> dict | N
         try:
             release_chat(key)
         except Exception:
-            pass
+            logger.debug("TRACEBACK", exc_info=True)
     return None
 
 
@@ -398,7 +398,7 @@ def request_not_sent(ex: Exception) -> bool:
         if isinstance(ex, requests.exceptions.ReadTimeout):
             return False
     except Exception:
-        pass
+        logger.debug("TRACEBACK", exc_info=True)
     if isinstance(ex, TimeoutError) and "rate-limit" in str(ex):
         return True
     text = repr(ex).lower()
@@ -750,7 +750,7 @@ def handle_pending_message(cardinal, event, kinds: set[str]) -> bool:
             try:
                 set_chat_mute(chat_id, 90)
             except Exception:
-                pass
+                logger.debug("TRACEBACK", exc_info=True)
             if nxt:
                 _ask_next(cardinal, chat_id, nxt, name)
         elif result == "hold":

@@ -71,7 +71,7 @@ def get_steam_time_offset() -> int:
             _STEAM_TIME_OFFSET = server_time - int(time.time())
             _LAST_STEAM_TIME_SYNC = now
     except Exception:
-        pass
+        logger.debug("TRACEBACK", exc_info=True)
     return _STEAM_TIME_OFFSET
 
 def generate_steam_guard_code(shared_secret: str, offset: int = 0) -> str:
@@ -783,7 +783,7 @@ def init_settings(cardinal):
         try:
             bot.delete_message(m.chat.id, m.id)
         except Exception:
-            pass
+            logger.debug("TRACEBACK", exc_info=True)
         parts = (m.text or "").split(maxsplit=2)
         if len(parts) < 3 or not parts[1].isdigit() or len(parts[2].strip()) < 2:
             bot.send_message(m.chat.id, "Формат: <code>/rentpass ID_слота новый_пароль</code>\n" + _slots_summary(),
@@ -808,7 +808,7 @@ def init_settings(cardinal):
             try:
                 bot.edit_message_text(f"✅ Слот {parts[2]} снова свободен для аренды.", c.message.chat.id, c.message.id)
             except Exception:
-                pass
+                logger.debug("TRACEBACK", exc_info=True)
             Thread(target=sync_lots_visibility, args=(cardinal,), daemon=True).start()
 
     tg.msg_handler(cmd_rentpass, commands=["rentpass"])

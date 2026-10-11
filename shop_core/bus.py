@@ -107,7 +107,7 @@ def freeze(reason: str, cardinal=None) -> None:
                 f"Опрос FunPay и автозакупки остановлены. /unfreeze после проверки сессии."
             )
         except Exception:
-            pass
+            logger.debug("TRACEBACK", exc_info=True)
 
 
 def unfreeze() -> None:
@@ -230,7 +230,7 @@ def peer_ids(*cands, account_id=None) -> list[int]:
                 continue
             keys.append(node)
     except Exception:
-        pass
+        logger.debug("TRACEBACK", exc_info=True)
     return keys
 
 

@@ -230,7 +230,7 @@ def hub_text(cardinal) -> str:
     try:
         ad_on = cardinal.MAIN_CFG.getboolean("FunPay", "autoDelivery")
     except Exception:
-        pass
+        logger.debug("TRACEBACK", exc_info=True)
     lines = [
         "📝 <b>Микролоты 5–10 ₽</b>",
         "Реальные короткие фишки/инструкции. Закупка 0 ₽.",
@@ -294,7 +294,7 @@ def init_pre(cardinal):
         try:
             bot.answer_callback_query(c.id)
         except Exception:
-            pass
+            logger.debug("TRACEBACK", exc_info=True)
         action = (c.data or "").split(":")[1] if ":" in (c.data or "") else "hub"
         if action == "fill":
             bind_delivery(cardinal)
