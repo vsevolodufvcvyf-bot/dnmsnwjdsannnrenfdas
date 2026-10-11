@@ -214,8 +214,8 @@ def bind_delivery(cardinal) -> int:
         changed += 1
     if changed:
         try:
-            with open("configs/auto_delivery.cfg", "w", encoding="utf-8") as f:
-                ad.write(f)
+            from shop_core.fileio import write_config
+            write_config("configs/auto_delivery.cfg", ad)
         except Exception as ex:
             logger.debug("[MicroLots] save AD: %s", ex)
     return changed

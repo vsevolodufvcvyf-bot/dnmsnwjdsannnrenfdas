@@ -272,6 +272,7 @@ class Cardinal(object):
         if update_main_profile:
             self.profile = profile
             self.curr_profile = profile
+            self._profile_placeholder = False
             self.lots_ids = [i.id for i in profile.get_lots()]
             logger.info(_("crd_profile_updated", len(profile.get_lots()), len(profile.get_sorted_lots(2))))
         if update_telegram_profile:
@@ -333,7 +334,25 @@ class Cardinal(object):
                 self.__empty_profile(banned=False),
                 update_telegram_profile, update_main_profile,
             )
+            if update_main_profile:
+                self._profile_placeholder = True
         return False
+
+    def profile_retry_loop(self):
+        """Если на старте FunPay не отдал профиль, бот работает с заглушкой: перечитываем её, пока не выйдет."""
+        delay = 60
+        while getattr(self, "_profile_placeholder", False):
+            time.sleep(delay)
+            try:
+                from shop_core.bus import is_frozen
+                if is_frozen():
+                    continue
+            except Exception:
+                logger.debug("TRACEBACK", exc_info=True)
+            if self.__update_profile(infinite_polling=False, attempts=1):
+                logger.info("$GREENПрофиль FunPay загружен после повторной попытки.")
+                break
+            delay = min(delay * 2, 900)
 
     def __init_telegram(self) -> None:
         """
@@ -836,6 +855,7 @@ class Cardinal(object):
 
         Thread(target=self.lots_raise_loop, daemon=True).start()
         Thread(target=self.update_session_loop, daemon=True).start()
+        Thread(target=self.profile_retry_loop, daemon=True).start()
         self.process_events()
 
     def start(self):
@@ -882,8 +902,8 @@ class Cardinal(object):
         :param config: объект конфига.
         :param file_path: путь до файла, в который нужно сохранить конфиг.
         """
-        with open(file_path, "w", encoding="utf-8") as f:
-            config.write(f)
+        from shop_core.fileio import write_config
+        write_config(file_path, config)
 
     # Загрузка плагинов
     @staticmethod

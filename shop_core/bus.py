@@ -53,18 +53,38 @@ def hydrate() -> None:
         conn.execute("SELECT COUNT(*) FROM bus_flags")
 
 
+_FLAG_TTL = 5.0
+_FLAG_CACHE: dict[str, tuple[float, str | None]] = {}
+
+
+def clear_flag_cache() -> None:
+    with _LOCK:
+        _FLAG_CACHE.clear()
+
+
 def set_flag(key: str, value: str) -> None:
     with get_db() as conn:
         conn.execute(
             "INSERT OR REPLACE INTO bus_flags (key, value, updated_at) VALUES (?, ?, ?)",
             (key, value, time.time()),
         )
+    with _LOCK:
+        _FLAG_CACHE[key] = (time.time(), value)
 
 
 def get_flag(key: str, default: str | None = None) -> str | None:
+    """Флаги читаются часто (заморозка — на каждом запросе к FunPay), поэтому кэш на 5 секунд."""
+    now = time.time()
+    with _LOCK:
+        hit = _FLAG_CACHE.get(key)
+    if hit and now - hit[0] < _FLAG_TTL:
+        return hit[1] if hit[1] is not None else default
     with get_db() as conn:
         row = conn.execute("SELECT value FROM bus_flags WHERE key = ?", (key,)).fetchone()
-        return row["value"] if row else default
+    value = row["value"] if row else None
+    with _LOCK:
+        _FLAG_CACHE[key] = (now, value)
+    return value if value is not None else default
 
 
 def is_frozen() -> bool:

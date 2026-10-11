@@ -46,8 +46,8 @@ def load_cfg():
             "assume_sale_rub": "0",
         }
         os.makedirs("configs", exist_ok=True)
-        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-            cfg.write(f)
+        from shop_core.fileio import write_config
+        write_config(CONFIG_FILE, cfg)
     return cfg["Restock"]
 
 

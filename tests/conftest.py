@@ -19,10 +19,9 @@ def isolated_cwd(tmp_path, monkeypatch):
     os.makedirs(os.path.join("storage", "cache"), exist_ok=True)
     from shop_core import db
     db.init_db()
-    from shop_core import settings
-    clear = getattr(settings, "clear_cache", None)
-    if clear:
-        clear()
+    from shop_core import bus, settings
+    settings.clear_cache()
+    bus.clear_flag_cache()
     yield tmp_path
 
 

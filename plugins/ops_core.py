@@ -5,14 +5,15 @@ import gzip
 import logging
 import os
 import shutil
+import sqlite3
 import time
 from datetime import datetime
 from threading import Thread
 
 from shop_core import logging_redact
 from shop_core.bus import (
-    MSG_ORIGIN, bind_cardinal, drain_digest, freeze, freeze_bypassed, hydrate, is_frozen, mark_human,
-    notify, quiet_hours_now, release_chat, unfreeze,
+    MSG_ORIGIN, bind_cardinal, bypass_freeze, drain_digest, freeze, freeze_bypassed, get_flag, hydrate,
+    is_frozen, mark_human, notify, quiet_hours_now, release_chat, unfreeze,
 )
 from shop_core.db import DB_FILE, get_db
 from shop_core.settings import is_dry_run, is_panic, load_ops, min_margin_mult, set_flag
@@ -87,6 +88,47 @@ def _install_watchdog(cardinal) -> None:
     cardinal.send_message = send_wrapped
 
 
+BACKUP_KEEP_DAYS = 14
+LOG_KEEP_DAYS = 30
+_LAST_PROBE = 0.0
+
+
+def backup_db(db_file: str, dest: str) -> None:
+    """Снимок через sqlite backup API: в копию попадают и транзакции из -wal файла."""
+    tmp_db = dest + ".snapshot"
+    src = sqlite3.connect(db_file, timeout=30)
+    dst = sqlite3.connect(tmp_db)
+    try:
+        src.backup(dst)
+    finally:
+        dst.close()
+        src.close()
+    try:
+        with open(tmp_db, "rb") as raw, gzip.open(dest + ".tmp", "wb") as gz:
+            shutil.copyfileobj(raw, gz)
+        os.replace(dest + ".tmp", dest)
+    finally:
+        try:
+            os.remove(tmp_db)
+        except OSError:
+            pass
+
+
+def _remove_older_than(folder: str, days: int, prefix: str = "") -> None:
+    cutoff = time.time() - days * 86400
+    if not os.path.isdir(folder):
+        return
+    for name in os.listdir(folder):
+        if prefix and not name.startswith(prefix):
+            continue
+        path = os.path.join(folder, name)
+        try:
+            if os.path.isfile(path) and os.path.getmtime(path) < cutoff:
+                os.remove(path)
+        except OSError:
+            pass
+
+
 def _backup_once():
     global _LAST_BACKUP_DAY
     day = datetime.now().strftime("%Y-%m-%d")
@@ -97,24 +139,42 @@ def _backup_once():
     dest_dir = os.path.join("storage", "backups")
     os.makedirs(dest_dir, exist_ok=True)
     dest = os.path.join(dest_dir, f"cardinal_storage_{day}.db.gz")
-    if os.path.exists(dest):
-        _LAST_BACKUP_DAY = day
-        return
-    tmp = dest + ".tmp"
-    with open(DB_FILE, "rb") as src, gzip.open(tmp, "wb") as gz:
-        shutil.copyfileobj(src, gz)
-    os.replace(tmp, dest)
+    if not os.path.exists(dest):
+        backup_db(DB_FILE, dest)
     _LAST_BACKUP_DAY = day
-    cutoff = time.time() - 30 * 86400
-    log_dir = "logs"
-    if os.path.isdir(log_dir):
-        for name in os.listdir(log_dir):
-            path = os.path.join(log_dir, name)
-            try:
-                if os.path.isfile(path) and os.path.getmtime(path) < cutoff:
-                    os.remove(path)
-            except OSError:
-                pass
+    _remove_older_than(dest_dir, BACKUP_KEEP_DAYS, prefix="cardinal_storage_")
+    _remove_older_than("logs", LOG_KEEP_DAYS)
+
+
+def probe_session(cardinal, now: float | None = None) -> bool:
+    """Заморозку из-за 401 / капчи снимает сама, если сессия FunPay снова отвечает.
+
+    Аварийный стоп (panic) не трогает. True — заморозка снята.
+    """
+    global _LAST_PROBE
+    if is_panic() or not is_frozen():
+        return False
+    cfg = load_ops()
+    if not cfg.getboolean("Watchdog", "auto_unfreeze", fallback=True):
+        return False
+    every = max(5, cfg.getint("Watchdog", "probe_every_min", fallback=15)) * 60
+    now = time.time() if now is None else now
+    if now - _LAST_PROBE < every:
+        return False
+    _LAST_PROBE = now
+    reason = get_flag("freeze_reason", "") or "—"
+    account = getattr(cardinal, "account", None)
+    if account is None:
+        return False
+    try:
+        with bypass_freeze():
+            account.get()
+    except Exception as ex:
+        logger.info("[OpsCore] проба сессии FunPay: всё ещё не работает (%s)", ex)
+        return False
+    unfreeze()
+    notify(cardinal, f"▶️ Сессия FunPay снова отвечает — заморозка снята автоматически.\nПричина была: {reason}", True)
+    return True
 
 
 def _loop(cardinal):
@@ -122,6 +182,7 @@ def _loop(cardinal):
     while True:
         try:
             _backup_once()
+            probe_session(cardinal)
             now = datetime.now()
             cfg = load_ops()
             to = cfg.get("Ops", "quiet_to", fallback="09:00")

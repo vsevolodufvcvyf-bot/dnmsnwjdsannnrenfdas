@@ -267,8 +267,8 @@ def load_suppliers_cfg() -> configparser.ConfigParser:
 
 def save_suppliers_cfg(cfg: configparser.ConfigParser) -> None:
     os.makedirs(os.path.dirname(SUPPLIERS_FILE) or ".", exist_ok=True)
-    with open(SUPPLIERS_FILE, "w", encoding="utf-8") as f:
-        cfg.write(f)
+    from shop_core.fileio import write_config
+    write_config(SUPPLIERS_FILE, cfg)
 
 
 def save_supplier_section(section: str, updates: dict[str, Any], create: bool = True) -> None:

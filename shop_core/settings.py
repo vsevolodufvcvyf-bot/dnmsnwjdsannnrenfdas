@@ -1,32 +1,60 @@
 # -*- coding: utf-8 -*-
+"""Чтение и запись .cfg плагинов.
+
+Файл перечитывается с диска только если изменился (mtime + размер): флаги вроде panic и
+dry_run проверяются на каждом запросе к FunPay. Запись атомарная, а «прочитал — поменял —
+записал» идёт под одним замком, чтобы два потока не теряли изменения друг друга.
+"""
 from __future__ import annotations
 
 import configparser
 import os
 import threading
 
+from shop_core.fileio import write_config
+
 _LOCK = threading.RLock()
+_CACHE: dict[str, tuple[tuple[int, int], str]] = {}
 OPS_FILE = os.path.join("configs", "ops.cfg")
 AI_FILE = os.path.join("configs", "ai.cfg")
 
 
+def clear_cache() -> None:
+    with _LOCK:
+        _CACHE.clear()
+
+
 def _read(path: str) -> configparser.ConfigParser:
     cfg = configparser.ConfigParser()
-    if os.path.exists(path):
-        cfg.read(path, encoding="utf-8")
+    try:
+        st = os.stat(path)
+    except OSError:
+        return cfg
+    key = (st.st_mtime_ns, st.st_size)
+    with _LOCK:
+        hit = _CACHE.get(os.path.abspath(path))
+        if hit and hit[0] == key:
+            text = hit[1]
+        else:
+            with open(path, encoding="utf-8") as f:
+                text = f.read()
+            _CACHE[os.path.abspath(path)] = (key, text)
+    cfg.read_string(text)
     return cfg
 
 
-def load_ops() -> configparser.ConfigParser:
+def _write(path: str, cfg: configparser.ConfigParser) -> None:
     with _LOCK:
-        return _read(OPS_FILE)
+        write_config(path, cfg)
+        _CACHE.pop(os.path.abspath(path), None)
+
+
+def load_ops() -> configparser.ConfigParser:
+    return _read(OPS_FILE)
 
 
 def save_ops(cfg: configparser.ConfigParser) -> None:
-    with _LOCK:
-        os.makedirs(os.path.dirname(OPS_FILE), exist_ok=True)
-        with open(OPS_FILE, "w", encoding="utf-8") as f:
-            cfg.write(f)
+    _write(OPS_FILE, cfg)
 
 
 def load_ai() -> configparser.ConfigParser:
@@ -34,9 +62,7 @@ def load_ai() -> configparser.ConfigParser:
 
 
 def save_ai(cfg: configparser.ConfigParser) -> None:
-    os.makedirs(os.path.dirname(AI_FILE), exist_ok=True)
-    with open(AI_FILE, "w", encoding="utf-8") as f:
-        cfg.write(f)
+    _write(AI_FILE, cfg)
 
 
 def load_ini(path: str) -> configparser.ConfigParser:
@@ -44,11 +70,7 @@ def load_ini(path: str) -> configparser.ConfigParser:
 
 
 def save_ini(path: str, cfg: configparser.ConfigParser) -> None:
-    folder = os.path.dirname(path)
-    if folder:
-        os.makedirs(folder, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        cfg.write(f)
+    _write(path, cfg)
 
 
 def ini_bool(path: str, section: str, key: str, default: bool = False) -> bool:
@@ -58,36 +80,40 @@ def ini_bool(path: str, section: str, key: str, default: bool = False) -> bool:
     return cfg.getboolean(section, key, fallback=default)
 
 
+def _as_text(value) -> str:
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    if value in (1, "1", "true", "True"):
+        return "1"
+    return str(value)
+
+
 def set_ini(path: str, section: str, key: str, value) -> None:
-    cfg = load_ini(path)
-    if not cfg.has_section(section):
-        cfg.add_section(section)
-    cfg.set(section, key, "1" if value in (True, 1, "1", "true", "True") else str(value) if not isinstance(value, bool) else ("1" if value else "0"))
-    save_ini(path, cfg)
+    with _LOCK:
+        cfg = load_ini(path)
+        if not cfg.has_section(section):
+            cfg.add_section(section)
+        cfg.set(section, key, _as_text(value))
+        save_ini(path, cfg)
 
 
 def flip_ini(path: str, section: str, key: str, default: bool = False) -> bool:
-    new = not ini_bool(path, section, key, default)
-    set_ini(path, section, key, "1" if new else "0")
-    return new
+    with _LOCK:
+        new = not ini_bool(path, section, key, default)
+        set_ini(path, section, key, "1" if new else "0")
+        return new
 
 
 def is_dry_run() -> bool:
-    cfg = load_ops()
-    return cfg.getboolean("Ops", "dry_run", fallback=False)
+    return load_ops().getboolean("Ops", "dry_run", fallback=False)
 
 
 def is_panic() -> bool:
-    cfg = load_ops()
-    return cfg.getboolean("Ops", "panic", fallback=False)
+    return load_ops().getboolean("Ops", "panic", fallback=False)
 
 
 def set_flag(section: str, key: str, value: str) -> None:
-    cfg = load_ops()
-    if not cfg.has_section(section):
-        cfg.add_section(section)
-    cfg.set(section, key, str(value))
-    save_ops(cfg)
+    set_ini(OPS_FILE, section, key, str(value))
 
 
 def commission() -> float:

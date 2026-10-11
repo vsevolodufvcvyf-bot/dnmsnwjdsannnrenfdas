@@ -64,8 +64,8 @@ def save_pref(kind: str, key: str) -> None:
     cfg = load_pref()
     cfg.set("Pick", kind, key)
     os.makedirs("configs", exist_ok=True)
-    with open(CFG, "w", encoding="utf-8") as f:
-        cfg.write(f)
+    from shop_core.fileio import write_config
+    write_config(CFG, cfg)
 
 
 def _panel_profit(query: str, sale_hint: float = 500.0) -> tuple[float | None, str, bool]:

@@ -14,7 +14,6 @@ def _connect() -> sqlite3.Connection:
     os.makedirs(os.path.dirname(DB_FILE), exist_ok=True)
     conn = sqlite3.connect(DB_FILE, timeout=30.0)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA busy_timeout=30000;")
     conn.execute("PRAGMA synchronous=NORMAL;")
     return conn
@@ -23,6 +22,7 @@ def _connect() -> sqlite3.Connection:
 def init_db():
     with DB_LOCK:
         conn = _connect()
+        conn.execute("PRAGMA journal_mode=WAL;")
         c = conn.cursor()
 
         c.execute("""
