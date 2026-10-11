@@ -91,6 +91,19 @@ def _install_watchdog(cardinal) -> None:
 BACKUP_KEEP_DAYS = 14
 LOG_KEEP_DAYS = 30
 _LAST_PROBE = 0.0
+_LAST_UPSTREAM_DAY = ""
+
+
+def _upstream_daily(cardinal) -> None:
+    global _LAST_UPSTREAM_DAY
+    day = datetime.now().strftime("%Y-%m-%d")
+    if day == _LAST_UPSTREAM_DAY:
+        return
+    _LAST_UPSTREAM_DAY = day
+    if not load_ops().getboolean("Ops", "upstream_check", fallback=True):
+        return
+    from shop_core.upstream import check_and_notify
+    check_and_notify(cardinal)
 
 
 def backup_db(db_file: str, dest: str) -> None:
@@ -183,6 +196,7 @@ def _loop(cardinal):
         try:
             _backup_once()
             probe_session(cardinal)
+            _upstream_daily(cardinal)
             now = datetime.now()
             cfg = load_ops()
             to = cfg.get("Ops", "quiet_to", fallback="09:00")

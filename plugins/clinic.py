@@ -70,6 +70,12 @@ def scan(cardinal) -> tuple[list[str], list[str], list[str]]:
     for line in parse_issue_lines():
         warn.append(line)
     try:
+        from shop_core.upstream import status_line
+        line = status_line()
+        (warn if "есть новее" in line else ok).append(line)
+    except Exception:
+        logger.debug("TRACEBACK", exc_info=True)
+    try:
         if cfg and cfg.has_section("Proxy") and cfg["Proxy"].getboolean("enable", fallback=False):
             ok.append("Прокси для FunPay включён")
         elif cfg:
