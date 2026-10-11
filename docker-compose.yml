@@ -1,12 +1,16 @@
 services:
-  funpaycardinal:
+  nnansershop:
     build: .
-    container_name: funpaycardinal
+    container_name: nnansershop
     restart: unless-stopped
     stdin_open: true
     tty: true
+    env_file:
+      - path: .env
+        required: false
     volumes:
       - ./configs:/app/configs
       - ./logs:/app/logs
       - ./storage:/app/storage
+      - ./mafiles:/app/mafiles
       - ./plugins:/app/plugins

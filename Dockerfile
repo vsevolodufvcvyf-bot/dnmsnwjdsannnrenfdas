@@ -6,10 +6,10 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -U -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-VOLUME ["/app/configs", "/app/logs", "/app/storage", "/app/plugins"]
+VOLUME ["/app/configs", "/app/logs", "/app/storage", "/app/mafiles", "/app/plugins"]
 
 CMD ["python", "main.py"]
