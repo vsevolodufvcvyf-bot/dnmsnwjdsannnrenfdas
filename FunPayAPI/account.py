@@ -36,6 +36,24 @@ _BLOCKED_MARKERS = (
     "account/blocked",
 )
 _DEFAULT_AVATAR = "https://funpay.com/img/layout/avatar.png"
+PARSE_ISSUES: dict[str, tuple[float, int, int]] = {}
+"""Последние пропуски при разборе страниц FunPay: что → (время, не разобрано, всего)."""
+_PARSE_WARNED: dict[str, float] = {}
+_PARSE_WARN_EVERY = 600
+
+
+def _report_skipped(what: str, skipped: int, total: int) -> None:
+    """Часть элементов страницы не разобралась. Чаще всего это значит, что FunPay поменял вёрстку."""
+    if not skipped:
+        return
+    now = time.time()
+    PARSE_ISSUES[what] = (now, skipped, total)
+    if now - _PARSE_WARNED.get(what, 0) < _PARSE_WARN_EVERY:
+        logger.debug("FunPay: не разобрал %s из %s (%s)", skipped, total, what)
+        return
+    _PARSE_WARNED[what] = now
+    logger.warning("FunPay: не разобрал %s из %s (%s). Похоже, FunPay поменял вёрстку — "
+                   "проверь обновления FunPay Cardinal.", skipped, total, what)
 
 
 def _html_account_blocked(html: str, parser=None, url: str = "") -> bool:
@@ -504,10 +522,12 @@ class Account:
         result = []
         sellers = {}
         currency = None
+        skipped = 0
         for offer in offers:
             try:
                 href = offer.get("href") or ""
                 if "id=" not in href:
+                    skipped += 1
                     continue
                 offer_id = href.split("id=")[1].split("&")[0]
                 promo = "offer-promo" in offer.get("class", [])
@@ -569,7 +589,9 @@ class Account:
                 result.append(lot_obj)
             except Exception:
                 logger.debug("TRACEBACK", exc_info=True)
+                skipped += 1
                 continue
+        _report_skipped("лоты на витрине раздела", skipped, len(offers))
         return result
 
     def get_my_subcategory_lots(self, subcategory_id: int,
@@ -604,10 +626,12 @@ class Account:
         subcategory_obj = self.get_subcategory(enums.SubCategoryTypes.COMMON, subcategory_id)
         result = []
         currency = None
+        skipped = 0
         for offer in offers:
             try:
                 offer_id = offer.get("data-offer")
                 if not offer_id:
+                    skipped += 1
                     continue
                 description = offer.find("div", {"class": "tc-desc-text"})
                 description = description.get_text(strip=True) if description else None
@@ -634,7 +658,9 @@ class Account:
                 result.append(lot_obj)
             except Exception:
                 logger.debug("TRACEBACK", exc_info=True)
+                skipped += 1
                 continue
+        _report_skipped("мои лоты раздела", skipped, len(offers))
         return result
 
     def get_lot_page(self, lot_id: int, locale: Literal["ru", "en", "uk"] | None = None):
@@ -1378,6 +1404,7 @@ class Account:
         if not subcategories_divs:
             return user_obj
 
+        skipped = total = 0
         for i in subcategories_divs:
             try:
                 h3 = i.find("h3")
@@ -1395,9 +1422,11 @@ class Account:
                 offers = parent.find_all("a", {"class": "tc-item"})
                 currency = None
                 for j in offers:
+                    total += 1
                     try:
                         href = j.get("href") or ""
                         if "id=" not in href:
+                            skipped += 1
                             continue
                         offer_id = href.split("id=")[1].split("&")[0]
                         description = j.find("div", {"class": "tc-desc-text"})
@@ -1431,10 +1460,13 @@ class Account:
                         user_obj.add_lot(lot_obj)
                     except Exception:
                         logger.debug("TRACEBACK", exc_info=True)
+                        skipped += 1
                         continue
             except Exception:
                 logger.debug("TRACEBACK", exc_info=True)
+                skipped += 1
                 continue
+        _report_skipped("лоты в профиле", skipped, max(total, skipped))
         return user_obj
 
     def get_chat(self, chat_id: int, with_history: bool = True,
@@ -1681,6 +1713,7 @@ class Account:
             return None, [], locale, subcategories
 
         sales = []
+        skipped = 0
         for div in order_divs:
             try:
                 classname = div.get("class") or []
@@ -1699,6 +1732,7 @@ class Account:
 
                 order_el = div.find("div", {"class": "tc-order"})
                 if not order_el:
+                    skipped += 1
                     continue
                 order_id = order_el.get_text(strip=True).lstrip("#")
                 if order_id in exclude_ids:
@@ -1709,6 +1743,7 @@ class Account:
                 description = desc_inner.get_text(strip=True) if desc_inner else ""
                 price_el = div.find("div", {"class": "tc-price"})
                 if not price_el:
+                    skipped += 1
                     continue
                 tc_price = price_el.get_text(" ", strip=True)
                 price, currency = tc_price.rsplit(maxsplit=1)
@@ -1718,6 +1753,7 @@ class Account:
                 name_wrap = div.find("div", {"class": "media-user-name"})
                 buyer_div = name_wrap.find("span") if name_wrap else None
                 if not buyer_div:
+                    skipped += 1
                     continue
                 buyer_username = buyer_div.get_text(strip=True)
                 href = buyer_div.get("data-href") or ""
@@ -1738,8 +1774,9 @@ class Account:
                 sales.append(order_obj)
             except Exception:
                 logger.debug("TRACEBACK", exc_info=True)
+                skipped += 1
                 continue
-
+        _report_skipped("заказы в продажах", skipped, len(order_divs))
         return next_order_id, sales, locale, subcategories
 
     def get_sells(self, start_from: str | None = None, include_paid: bool = True, include_closed: bool = True,

@@ -35,6 +35,23 @@ def _ok(cardinal, uid: int) -> bool:
     return bool(tg) and uid in getattr(tg, "authorized_users", {})
 
 
+def parse_issue_lines(now: float | None = None, window: float = 86400) -> list[str]:
+    """Пропуски при разборе страниц FunPay за сутки — первый признак смены вёрстки."""
+    import time
+    from datetime import datetime
+    try:
+        from FunPayAPI.account import PARSE_ISSUES
+    except Exception:
+        return []
+    now = time.time() if now is None else now
+    out = []
+    for what, (ts, skipped, total) in sorted(PARSE_ISSUES.items()):
+        if now - ts <= window:
+            out.append(f"FunPay: не разобрал {skipped} из {total} ({what}, {datetime.fromtimestamp(ts):%H:%M}). "
+                       f"Похоже, FunPay поменял вёрстку — нужны правки из свежего FunPay Cardinal.")
+    return out
+
+
 def scan(cardinal) -> tuple[list[str], list[str], list[str]]:
     """ok, warn, critical — без секретов."""
     ok, warn, bad = [], [], []
@@ -50,6 +67,8 @@ def scan(cardinal) -> tuple[list[str], list[str], list[str]]:
         ok.append("Сессия FunPay: ключ на месте")
     else:
         bad.append("Нет golden_key в configs/_main.cfg — бот не зайдёт на FunPay")
+    for line in parse_issue_lines():
+        warn.append(line)
     try:
         if cfg and cfg.has_section("Proxy") and cfg["Proxy"].getboolean("enable", fallback=False):
             ok.append("Прокси для FunPay включён")
