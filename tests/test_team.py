@@ -6,7 +6,7 @@ from shop_core import team
 
 def test_no_owner_means_nobody_is_owner():
     assert team.owner_id() == 0
-    assert team.is_owner(8818924675) is False
+    assert team.is_owner(123456789) is False
     assert team.extra_ids() == set()
 
 
