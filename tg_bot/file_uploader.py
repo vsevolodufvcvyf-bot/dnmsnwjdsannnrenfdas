@@ -279,7 +279,9 @@ def init_uploader(cardinal: Cardinal):
             file_info = tg.bot.get_file(photo.file_id)
             file = tg.bot.download_file(file_info.file_path)
             image_id = cardinal.account.upload_image(file, type_="chat")
-            result = cardinal.send_message(chat_id, f"$photo={image_id}", username, watermark=False)
+            from Utils.msg_origin import human_origin
+            with human_origin():
+                result = cardinal.send_message(chat_id, f"$photo={image_id}", username, watermark=False)
             if not result:
                 raise Exception("Нету сообщений")
             tg.bot.reply_to(m, f'✅ Сообщение отправлено в переписку '

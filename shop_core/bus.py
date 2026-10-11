@@ -2,13 +2,13 @@
 from __future__ import annotations
 
 import contextlib
-import contextvars
 import logging
 import re
 import threading
 import time
 from typing import Any
 
+from Utils.msg_origin import MSG_ORIGIN, human_origin  # noqa: F401  (реэкспорт для плагинов)
 from shop_core.db import get_db
 from shop_core.settings import is_dry_run, is_panic, load_ops
 
@@ -21,7 +21,6 @@ STATE_WAITING_INPUT = "STATE_WAITING_INPUT"
 STATE_HUMAN_OPERATOR = "STATE_HUMAN_OPERATOR"
 HUMAN_STALE_SEC = 86400
 
-MSG_ORIGIN = contextvars.ContextVar("fp_msg_origin", default="human")
 
 _LOCK = threading.RLock()
 _CARDINAL = None
@@ -107,10 +106,6 @@ def unfreeze() -> None:
         hooks.emit("on_unfreeze", _CARDINAL)
 
     threading.Thread(target=_resume, daemon=True).start()
-
-
-def deliveries_blocked() -> bool:
-    return is_frozen() or is_panic() or is_dry_run() is None
 
 
 def can_spend_money() -> tuple[bool, str]:

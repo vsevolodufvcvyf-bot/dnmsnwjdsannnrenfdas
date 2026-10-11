@@ -144,7 +144,9 @@ def init_templates_cp(cardinal: Cardinal, *args):
             return
 
         text = tg.answer_templates[template_index].replace("$username", safe_text(username))
-        result = cardinal.send_message(node_id, text, username, watermark=False)
+        from Utils.msg_origin import human_origin
+        with human_origin():
+            result = cardinal.send_message(node_id, text, username, watermark=False)
 
         if prev_page == 3:
             bot.answer_callback_query(c.id, _("msg_sent_short") if result else _("msg_sending_error_short"))

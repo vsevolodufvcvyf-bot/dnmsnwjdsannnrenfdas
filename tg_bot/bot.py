@@ -791,7 +791,9 @@ class TGBot:
         node_id, username = data["node_id"], data["username"]
         self.clear_state(message.chat.id, message.from_user.id, True)
         response_text = message.text.strip()
-        result = self.cardinal.send_message(node_id, response_text, username, watermark=False)
+        from Utils.msg_origin import human_origin
+        with human_origin():
+            result = self.cardinal.send_message(node_id, response_text, username, watermark=False)
         if result:
             self.bot.reply_to(message, _("msg_sent", node_id, username),
                               reply_markup=kb.reply(node_id, username, again=True, extend=True))
