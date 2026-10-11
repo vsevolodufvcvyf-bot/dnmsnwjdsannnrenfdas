@@ -71,7 +71,9 @@ def smm_panel_candidates(service_id) -> list[dict]:
         s.read(FALLBACK_FILE, encoding="utf-8")
         if s.has_section("smm"):
             cpu = s["smm"].get("cost_per_unit", "0")
-    sid = str(service_id or cfg["Settings"].get("service_id", "") or "").strip()
+    sid = str(service_id or "").strip()
+    if not sid:
+        return []
     out = [{
         "name": "autosmm.cfg",
         "api_url": api_url,
@@ -148,7 +150,7 @@ def _ask_smm(cardinal, matched):
             return
         if matched["target_link"]:
             from shop_core.confirm import ask_confirm
-            ask_confirm(cardinal, chat_id, "smm", matched["target_link"])
+            ask_confirm(cardinal, chat_id, "smm", matched["target_link"], qty=matched.get("quantity"))
         else:
             bot_send(cardinal, chat_id, "Заказ накрутки принят.")
             ask_target(cardinal, chat_id, "smm")

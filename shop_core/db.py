@@ -212,6 +212,22 @@ def init_db():
             )
         """)
         _ensure_column(c, "sale_clock", "weekday", "INTEGER")
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS autoback_pending (
+                order_id TEXT PRIMARY KEY,
+                chat_id TEXT,
+                buyer_name TEXT,
+                stars INTEGER,
+                price REAL,
+                currency TEXT,
+                review_text TEXT,
+                reason TEXT,
+                status TEXT DEFAULT 'pending',
+                decided_by INTEGER,
+                created_at REAL,
+                decided_at REAL
+            )
+        """)
         conn.commit()
         conn.close()
 

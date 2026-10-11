@@ -135,19 +135,19 @@ def _arm_order(cardinal, event):
             if status == "fail":
                 return None
             if paused:
-                return {"chat_id": chat_id, "name": name, "user": user, "mode": "paused", "order_id": oid}
+                return {"chat_id": chat_id, "name": name, "qty": qty, "user": user, "mode": "paused", "order_id": oid}
             if status == "queued":
-                return {"chat_id": chat_id, "name": name, "user": user, "mode": "queued"}
-            return {"chat_id": chat_id, "name": name, "user": user, "mode": "confirm"}
+                return {"chat_id": chat_id, "name": name, "qty": qty, "user": user, "mode": "queued"}
+            return {"chat_id": chat_id, "name": name, "qty": qty, "user": user, "mode": "confirm"}
         status = put_pending(chat_id, oid, "stars", "need_target", "", qty, sale, extra,
                              cardinal=cardinal, peer_id=buyer)
         if status == "fail":
             return None
         if paused:
-            return {"chat_id": chat_id, "name": name, "user": None, "mode": "paused", "order_id": oid}
+            return {"chat_id": chat_id, "name": name, "qty": qty, "user": None, "mode": "paused", "order_id": oid}
         if status == "queued":
-            return {"chat_id": chat_id, "name": name, "user": None, "mode": "queued"}
-        return {"chat_id": chat_id, "name": name, "user": None, "mode": "need"}
+            return {"chat_id": chat_id, "name": name, "qty": qty, "user": None, "mode": "queued"}
+        return {"chat_id": chat_id, "name": name, "qty": qty, "user": None, "mode": "need"}
     except Exception as ex:
         logger.error("[AutoStars] order: %s", ex)
         return None
@@ -168,7 +168,7 @@ def _ask_after_arm(cardinal, armed):
             ask_queued(cardinal, armed["chat_id"], armed["name"])
             return
         if armed["mode"] == "confirm":
-            ask_confirm(cardinal, armed["chat_id"], "stars", armed["user"], armed["name"])
+            ask_confirm(cardinal, armed["chat_id"], "stars", armed["user"], armed["name"], qty=armed.get("qty"))
         else:
             bot_send(cardinal, armed["chat_id"], "Заказ на звёзды принят.", armed["name"])
             ask_target(cardinal, armed["chat_id"], "stars", armed["name"])

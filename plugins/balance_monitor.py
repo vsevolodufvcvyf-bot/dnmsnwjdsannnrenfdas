@@ -237,11 +237,11 @@ def send_wallet(bot, chat_id: int, cardinal) -> None:
 
 def _dest_prompt(way: str, bank: str) -> str:
     if way == "sbp":
-        name = _BANK.get(bank, bank)
         return (
-            f"🏦 Банк: <b>{html.escape(name)}</b>\n"
-            f"Пришли номер телефона СБП в формате <code>+7XXXXXXXXXX</code>.\n"
-            f"Только РФ."
+            "🏦 <b>СБП по номеру телефона</b> (только РФ).\n"
+            "Пришли номер в формате <code>+7XXXXXXXXXX</code>.\n"
+            "FunPay получает только номер — банк в этом запросе не передаётся. "
+            "Если FunPay потребует выбрать банк, выведи через сайт."
         )
     return (
         "💳 <b>Только карта РФ</b> (МИР / Visa / Mastercard российского банка).\n"
@@ -255,9 +255,8 @@ def _summary(st: dict) -> str:
     fee = fee_of(amount)
     net = net_of(amount)
     dest = mask_dest(st.get("dest") or "", way)
-    bank = _BANK.get(st.get("bank") or "", "—")
-    how = "СБП" if way == "sbp" else "карта РФ"
-    extra = f"\nБанк: <b>{html.escape(bank)}</b>" if way == "sbp" else ""
+    how = "СБП по номеру телефона" if way == "sbp" else "карта РФ"
+    extra = ""
     return (
         "🧾 <b>Проверь вывод</b>\n"
         "┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n"
@@ -539,26 +538,8 @@ def init_post(cardinal):
             way = parts[2]
             if way not in ("sbp", "card"):
                 return
-            _WAIT[c.from_user.id] = {"way": way, "mode": "bank" if way == "sbp" else "dest"}
-            if way == "card":
-                _WAIT[c.from_user.id]["mode"] = "dest"
-                bot.send_message(c.message.chat.id, _dest_prompt("card", ""), parse_mode="HTML")
-                return
-            kb = K()
-            row = []
-            for key, name in BANKS:
-                row.append(B(name, callback_data=f"WAL:bank:{key}"))
-                if len(row) == 2:
-                    kb.row(*row)
-                    row = []
-            if row:
-                kb.row(*row)
-            kb.row(B("❌ Отмена", callback_data="WAL:x"))
-            bot.send_message(
-                c.message.chat.id,
-                "🏦 СБП — выбери банк получателя (РФ):",
-                reply_markup=kb,
-            )
+            _WAIT[c.from_user.id] = {"way": way, "mode": "dest"}
+            bot.send_message(c.message.chat.id, _dest_prompt(way, ""), parse_mode="HTML")
             return
         if action == "bank" and len(parts) > 2:
             if not _is_owner(c.from_user.id):

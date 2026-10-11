@@ -69,26 +69,34 @@ def parse_link(text: str) -> str | None:
 
 
 _UNIT_QTY_RE = re.compile(
-    r"(\d{1,6})\s*(?:зв[её]зд\w*|stars?|шт\b|штук\w*|подар\w*|gifts?|⭐)",
+    r"(\d{1,6})\s*(?:зв[её]зд\w*|stars?|шт\b|штук\w*|подар\w*|gifts?|⭐|подписчик\w*|лайк\w*|"
+    r"просмотр\w*|реакци\w*|участник\w*|followers?|subscribers?|likes?|views?|members?)",
     re.IGNORECASE,
 )
 _AMOUNT_TAIL_RE = re.compile(r",\s*\d{1,6}\s*(?:шт|pcs)\.?\s*$", re.IGNORECASE)
+_PLAIN_NUM_RE = re.compile(
+    r"(?<![\d.,])(\d{1,7})(?![\d.,])"
+    r"(?!\s*(?:дн|день|дня|дней|сут|час|ч\b|мин|сек|%|₽|руб|р\b|\$|usd|rub|eur|мес|год|лет|day|hour|min|sec))",
+    re.IGNORECASE,
+)
+_YEARS = range(2015, 2036)
 
 
 def parse_qty(text: str, default: int = 1) -> int:
+    """Сколько единиц закупить: число из названия лота × сколько штук купили.
+
+    «50 звёзд» × 3 шт. = 150. Без единицы берётся самое большое «голое» число (годы, сроки,
+    проценты и цены не считаются); чисел нет — столько, сколько штук купили.
+    """
     amount = max(1, int(default or 1))
     text = _AMOUNT_TAIL_RE.sub("", (text or "").strip())
-    unit = [int(x) for x in _UNIT_QTY_RE.findall(text or "") if int(x) > 0]
+    unit = [int(x) for x in _UNIT_QTY_RE.findall(text) if int(x) > 0]
     if unit:
         return unit[0] * amount
-    nums = [int(x) for x in _QTY_RE.findall(text or "") if int(x) > 0]
+    nums = [int(x) for x in _PLAIN_NUM_RE.findall(text) if int(x) > 0 and int(x) not in _YEARS]
     if not nums:
         return amount
-    nums.sort(reverse=True)
-    for n in nums:
-        if n not in (1,) or len(nums) == 1:
-            return n
-    return amount
+    return max(nums) * amount
 
 
 def _reply_words(text: str) -> list[str]:
@@ -279,8 +287,10 @@ def ask_queued(cardinal, chat_id, chat_name: str | None = None) -> None:
 def _ask_next(cardinal, chat_id, pending: dict, chat_name: str | None = None) -> None:
     kind = pending.get("kind") or ""
     payload = pending.get("payload") or ""
+    if pending.get("step") == "check":
+        return
     if pending.get("step") == "confirm" and payload:
-        ask_confirm(cardinal, chat_id, kind, payload, chat_name)
+        ask_confirm(cardinal, chat_id, kind, payload, chat_name, qty=pending.get("qty"))
     else:
         ask_target(cardinal, chat_id, kind, chat_name)
 
@@ -332,16 +342,6 @@ def resume_pending(cardinal) -> int:
     return sent
 
 
-def _panel_no_funds(res, data) -> bool:
-    code = int(getattr(res, "status_code", 0) or 0)
-    if code == 402:
-        return True
-    if not isinstance(data, dict):
-        return False
-    blob = str(data.get("error") or data.get("message") or "").lower()
-    return any(part in blob for part in ("not enough", "insufficient", "no fund", "недостаточно"))
-
-
 def ask_target(cardinal, chat_id, kind: str, chat_name: str | None = None) -> None:
     if kind == "stars":
         text = "Напиши Telegram-юзернейм, куда отправить звёзды. Например: @username"
@@ -358,13 +358,18 @@ def ask_target(cardinal, chat_id, kind: str, chat_name: str | None = None) -> No
     bot_send(cardinal, chat_id, text, chat_name)
 
 
-def ask_confirm(cardinal, chat_id, kind: str, payload: str, chat_name: str | None = None) -> None:
+def ask_confirm(cardinal, chat_id, kind: str, payload: str, chat_name: str | None = None,
+                qty: int | None = None) -> None:
+    n = int(qty or 0)
     if kind == "stars":
-        text = f"Звёзды уйдут на @{payload.lstrip('@')}. Верно? Напиши да или нет."
+        what = f"{n} ⭐" if n else "Звёзды"
+        text = f"{what} уйдут на @{payload.lstrip('@')}. Верно? Напиши да или нет."
     elif kind == "gift":
-        text = f"Подарок уйдёт на @{payload.lstrip('@')}. Верно? Напиши да или нет."
+        what = f"Подарки ({n} шт.)" if n > 1 else "Подарок"
+        text = f"{what} уйдёт на @{payload.lstrip('@')}. Верно? Напиши да или нет."
     elif kind == "smm":
-        text = f"Накрутка пойдёт на {payload}. Верно? Напиши да или нет."
+        what = f"Накрутка {n} шт." if n else "Накрутка"
+        text = f"{what} пойдёт на {payload}. Верно? Напиши да или нет."
     elif kind == "steam":
         text = f"Пополняю Steam-логин «{payload}». Верно? Напиши да или нет."
     elif kind == "digital":
@@ -374,27 +379,83 @@ def ask_confirm(cardinal, chat_id, kind: str, payload: str, chat_name: str | Non
     bot_send(cardinal, chat_id, text, chat_name)
 
 
-def _panel_retryable(ex: Exception) -> bool:
-    """Сеть оборвалась до ответа. Таймаут чтения не повторяем: заказ на первой панели уже мог создаться."""
+_NOT_SENT_MARKERS = (
+    "newconnectionerror", "failed to establish a new connection", "name or service not known",
+    "nameresolutionerror", "getaddrinfo failed", "connection refused", "no route to host",
+    "temporary failure in name resolution", "supplier rate-limit",
+)
+
+
+def request_not_sent(ex: Exception) -> bool:
+    """True — запрос точно не дошёл до панели (соединение не открылось), заказ там создаться не мог.
+
+    Таймаут чтения, обрыв после отправки и 5xx сюда не относятся: заказ мог уже создаться.
+    """
     try:
         import requests
+        if isinstance(ex, requests.exceptions.ConnectTimeout):
+            return True
+        if isinstance(ex, requests.exceptions.ReadTimeout):
+            return False
     except Exception:
-        return False
-    return isinstance(ex, requests.ConnectionError)
+        pass
+    if isinstance(ex, TimeoutError) and "rate-limit" in str(ex):
+        return True
+    text = repr(ex).lower()
+    return any(m in text for m in _NOT_SENT_MARKERS)
 
 
-def deliver_via_panel(cardinal, kind: str, order_id: str, chat_id, payload: str,
-                      qty: int, sale: float, query: str, chat_name: str | None = None,
-                      section: str | None = None, service_id: str | None = None) -> str:
-    plugin = {
-        "stars": "autostars", "gift": "autogift", "smm": "autosmm",
-        "steam": "steam_wallet", "digital": "digital",
-    }.get(kind, kind)
+def classify_panel_response(status_code: int, data) -> str:
+    """ok / no_funds / rejected (заказа точно нет) / uncertain (мог создаться)."""
+    if isinstance(data, dict) and str(data.get("order") or "").strip():
+        return "ok"
+    if status_code == 402:
+        return "no_funds"
+    if status_code >= 500 or not isinstance(data, dict) or not data:
+        return "uncertain"
+    blob = str(data.get("error") or data.get("message") or "").lower()
+    if any(part in blob for part in ("not enough", "insufficient", "no fund", "недостаточно")):
+        return "no_funds"
+    if data.get("error") or data.get("errors"):
+        return "rejected"
+    return "uncertain"
+
+
+def smm_service_for(cand: dict, text: str) -> str | None:
+    """Услуга панели под конкретный SMM-лот из ключа services: «подписчик:123, лайк:456».
+
+    Без явного соответствия панель для SMM не используется: один service_id на все SMM-товары
+    отправлял заказ на «лайки» в услугу «подписчики».
+    """
+    raw = str(cand.get("services") or "").strip()
+    if not raw:
+        return None
+    hay = (text or "").lower()
+    for part in re.split(r"[,;\n]+", raw):
+        if not part.strip():
+            continue
+        key, sep, sid = part.replace("=", ":").partition(":")
+        key, sid = key.strip().lower(), sid.strip()
+        if sep and key and sid.isdigit() and key in hay:
+            return sid
+    return None
+
+
+def _candidates_for(kind: str, query: str, section: str | None, service_id: str | None) -> tuple[list[dict], list[str]]:
     cands = candidates_from_suppliers(query)
+    notes: list[str] = []
     if kind == "smm":
-        cands = [c for c in cands if "smm" in (c.get("section") or "").lower() or c.get("plugin_name") == "autosmm"]
+        mapped = []
+        for c in cands:
+            if "smm" not in (c.get("section") or "").lower() and c.get("plugin_name") != "autosmm":
+                continue
+            sid = smm_service_for(c, query)
+            if sid:
+                mapped.append(c | {"service_id": sid})
+            else:
+                notes.append(f"{c.get('name')}: нет services для этого лота — пропускаю")
         from shop_core import hooks
-        cands.extend(hooks.collect("smm_candidates", service_id))
+        cands = mapped + hooks.collect("smm_candidates", service_id)
     elif kind == "stars":
         cands = [c for c in cands if "star" in (c.get("section") or "").lower() or "звезд" in (c.get("keywords") or "").lower()]
         if not cands:
@@ -408,7 +469,33 @@ def deliver_via_panel(cardinal, kind: str, order_id: str, chat_id, payload: str,
         narrowed = [c for c in cands if str(c.get("section") or "").split("/")[0] == wanted]
         if narrowed:
             cands = narrowed
+    return cands, notes
+
+
+def _check_kb(order_id: str):
+    from telebot.types import InlineKeyboardButton as B, InlineKeyboardMarkup as K
+    kb = K()
+    kb.row(B("🔁 Заказа там нет — повторить", callback_data=f"CNF:retry:{order_id}"))
+    kb.row(B("✅ Заказ создан / выдал вручную", callback_data=f"CNF:done:{order_id}"))
+    return kb
+
+
+def deliver_via_panel(cardinal, kind: str, order_id: str, chat_id, payload: str,
+                      qty: int, sale: float, query: str, chat_name: str | None = None,
+                      section: str | None = None, service_id: str | None = None) -> str:
+    """Закупка у панели. Результат: ok / hold / busy / paused / fail / uncertain.
+
+    uncertain — панель не ответила однозначно (таймаут, обрыв, 5xx): заказ у поставщика мог
+    создаться, поэтому замок не снимается и повторной закупки нет, пока продавец не проверит.
+    """
+    plugin = {
+        "stars": "autostars", "gift": "autogift", "smm": "autosmm",
+        "steam": "steam_wallet", "digital": "digital",
+    }.get(kind, kind)
+    cands, cand_notes = _candidates_for(kind, query, section, service_id)
     fitting, why = budget_panels(cands, sale, qty) if cands else ([], "Нет панели с ключом.")
+    if cand_notes:
+        why = "\n".join([why, *cand_notes]).strip()
     if not fitting:
         return "hold"
     best = fitting[0]
@@ -440,49 +527,39 @@ def deliver_via_panel(cardinal, kind: str, order_id: str, chat_id, payload: str,
     import requests
     last_error = "поставщик не ответил"
     for idx, panel in enumerate(fitting):
-        service_id = str(panel.get("service_id") or "").strip()
-        if not service_id:
-            last_error = f"нет service_id в [{panel.get('name')}]"
+        panel_name = panel.get("name")
+        sid = str(panel.get("service_id") or "").strip()
+        if not sid:
+            last_error = f"нет service_id в [{panel_name}]"
             continue
         link_field = str(panel.get("field_link") or "link").strip() or "link"
         if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,31}", link_field):
             link_field = "link"
         payload_req = {
             "key": panel["api_key"], "action": "add",
-            "service": service_id, "quantity": int(qty),
+            "service": sid, "quantity": int(qty),
             link_field: payload,
         }
         try:
             res = supplier_post(requests.post, panel["api_url"], payload_req, timeout=15.0)
-            try:
-                data = res.json()
-            except Exception:
-                data = {}
-            code = int(getattr(res, "status_code", 0) or 0)
-            if code in (502, 503, 504):
-                last_error = f"HTTP {code}"
-                logger.warning("[%s] panel %s HTTP %s", plugin, panel.get("name"), code)
+        except Exception as ex:
+            logger.warning("[%s] panel add: %s", plugin, ex)
+            if request_not_sent(ex):
+                last_error = str(ex)[:240]
                 if idx + 1 < len(fitting):
-                    notify(
-                        cardinal,
-                        f"↪️ {plugin} #{order_id}: «{panel.get('name')}» ответила {code}, пробую следующую панель.",
-                        True,
-                    )
+                    notify(cardinal, f"↪️ {plugin} #{order_id}: «{panel_name}» недоступна, пробую следующую панель.", True)
                     continue
                 break
-        except Exception as ex:
-            last_error = str(ex)[:240]
-            logger.warning("[%s] panel add: %s", plugin, ex)
-            if _panel_retryable(ex) and idx + 1 < len(fitting):
-                notify(
-                    cardinal,
-                    f"↪️ {plugin} #{order_id}: «{panel.get('name')}» недоступна, пробую следующую панель.",
-                    True,
-                )
-                continue
-            break
-        task = str((data or {}).get("order") or "") if isinstance(data, dict) else ""
-        if task:
+            return _mark_uncertain(cardinal, kind, plugin, order_id, chat_id, chat_name, payload, qty,
+                                   panel_name, f"нет ответа: {str(ex)[:200]}")
+        try:
+            data = res.json()
+        except Exception:
+            data = {}
+        code = int(getattr(res, "status_code", 0) or 0)
+        verdict = classify_panel_response(code, data)
+        if verdict == "ok":
+            task = str(data.get("order"))
             with get_db() as conn:
                 conn.execute(
                     """INSERT OR REPLACE INTO supplier_orders
@@ -494,23 +571,38 @@ def deliver_via_panel(cardinal, kind: str, order_id: str, chat_id, payload: str,
             bot_send(cardinal, chat_id, f"Готово, заказ у поставщика. Номер задачи: #{task}", chat_name)
             notify(cardinal, f"✅ {plugin} #{order_id} → <code>{payload}</code> qty={qty} task #{task}", False)
             return "ok"
-        if _panel_no_funds(res, data):
-            last_error = str(data)[:240]
-            logger.warning("[%s] no funds on %s", plugin, panel.get("name"))
+        if verdict == "no_funds":
+            last_error = f"нет баланса на «{panel_name}»: {str(data)[:200]}"
+            logger.warning("[%s] no funds on %s", plugin, panel_name)
             if idx + 1 < len(fitting):
-                notify(
-                    cardinal,
-                    f"↪️ {plugin} #{order_id}: на «{panel.get('name')}» нет баланса, пробую следующую панель.",
-                    True,
-                )
+                notify(cardinal, f"↪️ {plugin} #{order_id}: на «{panel_name}» нет баланса, пробую следующую панель.", True)
                 continue
             break
-        last_error = str(data)[:240]
+        if verdict == "uncertain":
+            return _mark_uncertain(cardinal, kind, plugin, order_id, chat_id, chat_name, payload, qty,
+                                   panel_name, f"HTTP {code}, ответ: {str(data)[:200]}")
+        last_error = f"«{panel_name}» отклонила: {str(data)[:220]}"
         break
     release_delivery(str(order_id), plugin)
     notify(cardinal, f"❌ {plugin} #{order_id}: {last_error}", True)
-    bot_send(cardinal, chat_id, "Поставщик не принял заказ. Напиши да ещё раз или подожди продавца.", chat_name)
+    bot_send(cardinal, chat_id, "Поставщик не принял заказ. Проверь данные и напиши да ещё раз или подожди продавца.", chat_name)
     return "fail"
+
+
+def _mark_uncertain(cardinal, kind: str, plugin: str, order_id, chat_id, chat_name, payload, qty,
+                    panel_name, detail: str) -> str:
+    notify(
+        cardinal,
+        f"⚠️ <b>{plugin} #{order_id}: панель «{panel_name}» не ответила однозначно</b>\n"
+        f"{detail}\n"
+        f"Цель: <code>{payload}</code> · qty={qty}\n"
+        f"Заказ у поставщика мог создаться, поэтому повторно не покупаю. "
+        f"Проверь в кабинете панели и нажми кнопку.",
+        True,
+        keyboard=_check_kb(str(order_id)),
+    )
+    bot_send(cardinal, chat_id, "Заказ принят, проверяю его у поставщика. Напишу сюда, как только будет ясно.", chat_name)
+    return "uncertain"
 
 
 _TOKEN_USER = re.compile(r"^[A-Za-z][A-Za-z0-9_]{4,31}$")
@@ -583,7 +675,7 @@ def handle_pending_message(cardinal, event, kinds: set[str]) -> bool:
         float(pending.get("created_at") or 0),
         float((pending.get("extra") or {}).get("resumed_at") or 0),
     )
-    if time.time() - started > 3600 * 6:
+    if pending.get("step") != "check" and time.time() - started > 3600 * 6:
         nxt = pop_pending(chat_id, cardinal, pending.get("order_id"))
         notify(
             cardinal,
@@ -607,6 +699,15 @@ def handle_pending_message(cardinal, event, kinds: set[str]) -> bool:
     extra = pending.get("extra") or {}
     owner = pending["chat_id"]
 
+    if pending["step"] == "check":
+        last = float(extra.get("check_reply_at") or 0)
+        if time.time() - last > 600:
+            extra["check_reply_at"] = time.time()
+            put_pending(chat_id, pending["order_id"], kind, "check", pending["payload"],
+                        pending["qty"], pending["sale"], extra, cardinal=cardinal, peer_id=owner)
+            bot_send(cardinal, chat_id, "Заказ на проверке у продавца — он сверяет его с поставщиком и напишет сюда.", name)
+        return True
+
     def keep(step: str, value: str = "") -> None:
         put_pending(
             chat_id, pending["order_id"], kind, step, value,
@@ -619,7 +720,7 @@ def handle_pending_message(cardinal, event, kinds: set[str]) -> bool:
             ask_target(cardinal, chat_id, kind, name)
             return True
         keep("confirm", parsed)
-        ask_confirm(cardinal, chat_id, kind, parsed, name)
+        ask_confirm(cardinal, chat_id, kind, parsed, name, qty=pending["qty"])
         return True
     if pending["step"] == "confirm":
         if is_no(text):
@@ -630,7 +731,7 @@ def handle_pending_message(cardinal, event, kinds: set[str]) -> bool:
         current = str(pending.get("payload") or "").lstrip("@").lower()
         if corrected and corrected.lstrip("@").lower() != current:
             keep("confirm", corrected)
-            ask_confirm(cardinal, chat_id, kind, corrected, name)
+            ask_confirm(cardinal, chat_id, kind, corrected, name, qty=pending["qty"])
             return True
         if is_yes(text):
             payload = pending["payload"]
@@ -673,5 +774,98 @@ def handle_pending_message(cardinal, event, kinds: set[str]) -> bool:
             keep("confirm", str(payload))
         elif result == "fail":
             keep("confirm", str(payload))
+        elif result == "uncertain":
+            extra["uncertain_at"] = time.time()
+            extra["node"] = str(chat_id)
+            keep("check", str(payload))
         return True
     return False
+
+
+_PLUGIN_BY_KIND = {
+    "stars": "autostars", "gift": "autogift", "smm": "autosmm",
+    "steam": "steam_wallet", "digital": "digital",
+}
+_TG_READY = False
+
+
+def get_pending_by_order(order_id: str) -> dict | None:
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM pending_confirms WHERE order_id = ? ORDER BY created_at ASC LIMIT 1",
+            (str(order_id),),
+        ).fetchone()
+    return _row_pending(row) if row else None
+
+
+def list_pending() -> list[dict]:
+    with get_db() as conn:
+        rows = conn.execute("SELECT * FROM pending_confirms ORDER BY created_at ASC").fetchall()
+    return [_row_pending(r) for r in rows]
+
+
+def handle_check_callback(cardinal, c) -> None:
+    """Кнопки по заказу, где панель ответила неоднозначно: повторить закупку или отметить выполненным."""
+    from shop_core.bus import is_frozen
+    from shop_core.settings import is_panic
+    bot = cardinal.telegram.bot
+    parts = (c.data or "").split(":", 2)
+    if len(parts) != 3:
+        bot.answer_callback_query(c.id)
+        return
+    action, oid = parts[1], parts[2]
+    pending = get_pending_by_order(oid)
+    if not pending or pending["step"] != "check":
+        bot.answer_callback_query(c.id, "По этому заказу уже решено.")
+        return
+    kind = pending["kind"]
+    plugin = _PLUGIN_BY_KIND.get(kind, kind)
+    extra = pending.get("extra") or {}
+    node = str(extra.get("node") or pending["chat_id"])
+    target = int(node) if node.lstrip("-").isdigit() else node
+    if action == "done":
+        with get_db() as conn:
+            conn.execute("DELETE FROM pending_confirms WHERE chat_id = ? AND order_id = ?", (pending["chat_id"], oid))
+        release_chat(pending["chat_id"])
+        bot.answer_callback_query(c.id, "Отметил выполненным.")
+        result = f"✅ #{oid}: отмечен выполненным, повторной закупки не будет."
+    elif action == "retry":
+        if is_frozen() or is_panic():
+            bot.answer_callback_query(c.id, "Сейчас стоп или заморозка — сначала сними их.", show_alert=True)
+            return
+        bot.answer_callback_query(c.id, "Повторяю закупку…")
+        release_delivery(oid, plugin)
+        extra.pop("uncertain_at", None)
+        put_pending(target, oid, kind, "confirm", pending["payload"], pending["qty"], pending["sale"], extra,
+                    cardinal=cardinal, peer_id=pending["chat_id"])
+        outcome = deliver_via_panel(
+            cardinal, kind, oid, target, pending["payload"], pending["qty"], pending["sale"],
+            extra.get("query") or kind, None,
+            section=extra.get("target_section"), service_id=extra.get("service_id"),
+        )
+        if outcome == "ok":
+            pop_pending(pending["chat_id"], cardinal, oid)
+            result = f"✅ #{oid}: повторная закупка прошла."
+        elif outcome == "uncertain":
+            extra["uncertain_at"] = time.time()
+            put_pending(target, oid, kind, "check", pending["payload"], pending["qty"], pending["sale"], extra,
+                        cardinal=cardinal, peer_id=pending["chat_id"])
+            result = f"⚠️ #{oid}: панель снова не ответила однозначно — новое сообщение с кнопками выше."
+        else:
+            result = f"#{oid}: результат повтора — {outcome}. Подробности в уведомлениях."
+    else:
+        bot.answer_callback_query(c.id)
+        return
+    try:
+        bot.edit_message_text(result, c.message.chat.id, c.message.id, parse_mode="HTML")
+    except Exception:
+        bot.send_message(c.message.chat.id, result, parse_mode="HTML")
+
+
+def register_tg(cardinal) -> None:
+    global _TG_READY
+    tg = getattr(cardinal, "telegram", None)
+    if _TG_READY or not tg or not getattr(tg, "bot", None):
+        return
+    _TG_READY = True
+    tg.cbq_handler(lambda c: handle_check_callback(cardinal, c), lambda c: (c.data or "").startswith("CNF:"))

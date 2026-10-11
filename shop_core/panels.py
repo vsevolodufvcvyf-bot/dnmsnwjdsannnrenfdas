@@ -154,6 +154,7 @@ def candidates_from_suppliers(desc: str, kinds: set[str] | None = None) -> list[
             "section": section,
             "field_link": (block.get("field_link") or "link").strip() or "link",
             "keywords": block.get("keywords", ""),
+            "services": block.get("services", ""),
         }
         if not cand["api_url"] or not cand["api_key"]:
             continue

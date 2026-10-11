@@ -189,6 +189,8 @@ def init_post(cardinal):
     if not tg or not getattr(tg, "bot", None) or _TG_CMDS:
         return
     _TG_CMDS = True
+    from shop_core.confirm import register_tg as register_confirm_buttons
+    register_confirm_buttons(cardinal)
 
     def guard(m):
         return _auth_ok(cardinal, m)

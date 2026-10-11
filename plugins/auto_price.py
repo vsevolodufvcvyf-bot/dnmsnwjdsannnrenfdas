@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 import logging
+import os
 import time
 from threading import Thread
 
@@ -30,6 +31,11 @@ CONFIG_FILE = "configs/autoprice.cfg"
 _READY = False
 _LAST: list[str] = []
 _LAST_AT = 0.0
+PINNED_DEFAULTS = {
+    "pinned_hold": "1",
+    "pinned_raise_pct": "0",
+    "pinned_max_over_median_pct": "10",
+}
 
 
 def _cfg():
@@ -43,6 +49,15 @@ def _cfg():
         cfg.set("AutoPrice", "min_delta", "1")
         cfg.set("AutoPrice", "notify", "1")
         cfg.set("AutoPrice", "skip_seller_ids", "")
+    changed = False
+    for key, value in PINNED_DEFAULTS.items():
+        if not cfg.has_option("AutoPrice", key):
+            cfg.set("AutoPrice", key, value)
+            changed = True
+    if not cfg.has_section("MinPrice"):
+        cfg.add_section("MinPrice")
+        changed = True
+    if changed or not os.path.exists(CONFIG_FILE):
         from shop_core.settings import save_ini
         save_ini(CONFIG_FILE, cfg)
     return cfg["AutoPrice"]
@@ -123,30 +138,78 @@ def _anchor(lot_id, current: float) -> float:
     return current
 
 
-def _floor(lot, fp_min: float) -> tuple[float, str]:
-    """Минимум, ниже которого продажа уже не в плюс (или демпинг без себестоимости)."""
+def _min_price(lot_id) -> float:
+    cfg = load_ini(CONFIG_FILE)
+    if not cfg.has_section("MinPrice"):
+        return 0.0
+    try:
+        return float(cfg.get("MinPrice", str(lot_id), fallback="0") or 0)
+    except ValueError:
+        return 0.0
+
+
+def _floor(lot) -> tuple[float, str]:
+    """Минимум цены для покупателя, ниже которого продажа уже не в плюс.
+
+    Раньше сюда подмешивалась min_price_with_commission из calc(): это цена покупателя
+    за лот в 1000 ₽, а не минимум раздела, и дешёвые лоты «поднимались» до ~1000 ₽.
+    """
     desc = _lot_text(lot)
     cost = _unit_cost(desc)
     notes = []
-    floor = float(fp_min or 0)
     if cost > 0:
-        need = min_sale_for_cost(cost)
-        floor = max(floor, need)
-        notes.append(f"закупка {cost:.2f} → пол x{min_margin_mult():.1f} = {need:.2f}")
+        floor = min_sale_for_cost(cost)
+        notes.append(f"закупка {cost:.2f} → пол x{min_margin_mult():.1f} = {floor:.2f}")
     else:
         cur = float(getattr(lot, "price", 0) or 0)
         anchor = _anchor(getattr(lot, "id", None), cur)
-        keep = anchor * 0.5 if anchor else 0
-        floor = max(floor, keep)
-        notes.append("себестоимости нет — не ниже 50% первой цены и минимума FunPay")
+        floor = anchor * 0.5 if anchor else 0.0
+        notes.append("себестоимости нет — не ниже 50% первой цены")
+    explicit = _min_price(getattr(lot, "id", ""))
+    if explicit > 0:
+        floor = max(floor, explicit)
+        notes.append(f"минимум из [MinPrice] = {explicit:.2f}")
     return max(0.01, floor), "; ".join(notes)
 
 
-def _target(current: float, stats: dict, floor: float, undercut: float, max_drop_pct: float) -> tuple[float, str]:
+def coef_from(calc) -> float | None:
+    """Коэффициент «цена покупателя / цена в форме лота». Вне 1.0–3.0 — считаем неизвестным."""
+    if calc is None:
+        return None
+    try:
+        coef = float(calc.commission_coefficient)
+    except Exception:
+        return None
+    return coef if 1.0 <= coef <= 3.0 else None
+
+
+def seller_price_for(buyer_price: float, coef: float) -> float:
+    """В форме лота цена без комиссии; на витрине покупатель видит её × коэффициент."""
+    return round(float(buyer_price) / float(coef), 2)
+
+
+def is_pinned(public_lots, lot_id) -> bool:
+    lid = str(lot_id)
+    for item in public_lots or []:
+        if str(getattr(item, "id", "")) == lid:
+            return bool(getattr(item, "promo", False))
+    return False
+
+
+def _target(current: float, stats: dict, floor: float, undercut: float, max_drop_pct: float,
+            pinned: bool = False, raise_pct: float = 0.0, max_over_med_pct: float = 10.0,
+            min_delta: float = 1.0) -> tuple[float, str]:
     cheapest = float(stats.get("cheapest") or 0)
     live_med = float(stats.get("live_med") or stats.get("med") or 0)
     q1 = float(stats.get("q1") or 0)
     n = int(stats.get("n") or 0)
+    if pinned:
+        if raise_pct > 0 and live_med > 0:
+            cap = live_med * (1.0 + max(0.0, max_over_med_pct) / 100.0)
+            aim = min(current * (1.0 + raise_pct / 100.0), cap)
+            if aim - current >= min_delta:
+                return _nice(aim), f"лот в закрепе — поднимаю к рынку (не выше {cap:.0f})"
+        return current, "лот в закрепе — цену не снижаю"
     if n <= 0:
         return current, "на витрине нет чужих цен — не трогаю"
 
@@ -176,11 +239,16 @@ def _target(current: float, stats: dict, floor: float, undercut: float, max_drop
     return aim, why
 
 
-def _apply(cardinal, lot, new_price: float) -> None:
+def _apply(cardinal, lot, new_price: float, coef: float | None = None) -> float:
+    """new_price — цена для покупателя. В форму лота пишется цена без комиссии."""
     acc = cardinal.account
     fields = acc.get_lot_fields(int(lot.id))
-    fields.price = float(new_price)
+    k = coef or coef_from(getattr(fields, "calc_result", None))
+    if not k:
+        raise ValueError("не знаю комиссию раздела — цену не трогаю")
+    fields.price = seller_price_for(new_price, k)
     acc.save_lot(fields)
+    return fields.price
 
 
 def _log_row(lot_id, title, old, new, floor, market_min, reason, dry: int) -> None:
@@ -191,6 +259,22 @@ def _log_row(lot_id, title, old, new, floor, market_min, reason, dry: int) -> No
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (int(lot_id), title[:120], old, new, floor, market_min, reason[:240], dry, time.time()),
         )
+
+
+_PINNED_SEEN: dict[str, str] = {}
+
+
+def _note_pinned(cardinal, lot) -> None:
+    """Раз в день сообщает, что лот попал в закреп: тут выгоднее держать или поднимать цену."""
+    from datetime import datetime
+    day = datetime.now().strftime("%Y-%m-%d")
+    key = str(getattr(lot, "id", ""))
+    if _PINNED_SEEN.get(key) == day:
+        return
+    _PINNED_SEEN[key] = day
+    title = html.escape((getattr(lot, "description", None) or f"#{key}")[:60])
+    notify(cardinal, f"🔝 Лот «{title}» в закрепе. Автоцена его не снижает "
+                     f"(поднимать понемногу: pinned_raise_pct в configs/autoprice.cfg).", False)
 
 
 def run_once(cardinal) -> list[str]:
@@ -222,8 +306,11 @@ def run_once(cardinal) -> list[str]:
         if part.isdigit():
             skip_ids.add(int(part))
     dry = is_dry_run()
+    pinned_hold = str(cfg.get("pinned_hold", "1")).strip() not in ("0", "false", "False")
+    raise_pct = float(cfg.get("pinned_raise_pct", 0) or 0)
+    max_over_med = float(cfg.get("pinned_max_over_median_pct", 10) or 10)
     public: dict[int, list] = {}
-    fp_mins: dict[int, float] = {}
+    coefs: dict[int, float | None] = {}
 
     from plugins.market_analyzer import market_stats
 
@@ -257,39 +344,37 @@ def run_once(cardinal) -> list[str]:
             logger.debug("[AutoPrice] market %s: %s", sub_id, ex)
             continue
 
-        fp_min = 0.0
-        try:
-            if sub_id not in fp_mins:
-                calc = acc.calc(SubCategoryTypes.COMMON, sub_id)
-                raw = getattr(calc, "min_price_with_commission", None)
-                if raw is None:
-                    raw = getattr(calc, "min_price", 0)
-                fp_mins[sub_id] = float(raw or 0)
+        if sub_id not in coefs:
+            try:
+                coefs[sub_id] = coef_from(acc.calc(SubCategoryTypes.COMMON, sub_id))
                 time.sleep(0.4)
-            fp_min = float(fp_mins.get(sub_id) or 0)
-        except Exception as ex:
-            err = str(ex).lower()
-            if "401" in err or "403" in err or "captcha" in err or "unauthorized" in err:
-                freeze(f"автоцена calc: {ex}", cardinal)
-                break
-            logger.debug("[AutoPrice] calc %s: %s", sub_id, ex)
-            fp_mins[sub_id] = 0.0
+            except Exception as ex:
+                err = str(ex).lower()
+                if "401" in err or "403" in err or "captcha" in err or "unauthorized" in err:
+                    freeze(f"автоцена calc: {ex}", cardinal)
+                    break
+                logger.debug("[AutoPrice] calc %s: %s", sub_id, ex)
+                coefs[sub_id] = None
 
-        floor, floor_why = _floor(lot, fp_min)
-        target, why = _target(current, stats, floor, undercut, max_drop)
+        pinned = pinned_hold and is_pinned(public.get(sub_id), lot.id)
+        if pinned:
+            _note_pinned(cardinal, lot)
+        floor, floor_why = _floor(lot)
+        target, why = _target(current, stats, floor, undercut, max_drop, pinned=pinned,
+                              raise_pct=raise_pct, max_over_med_pct=max_over_med, min_delta=min_delta)
         title = html.escape((getattr(lot, "description", None) or f"#{lot.id}")[:48])
         if abs(target - current) < min_delta:
             continue
         if dry:
-            out.append(f"🧪 {title}: {current:.0f} → {target:.0f} ₽ ({why})")
+            out.append(f"🧪 {title}: {current:.0f} → {target:.0f} ₽ ({html.escape(why)})")
             _log_row(lot.id, getattr(lot, "description", "") or "", current, target, floor, stats.get("cheapest") or 0, why, 1)
             continue
         try:
-            _apply(cardinal, lot, target)
+            written = _apply(cardinal, lot, target, coefs.get(sub_id))
             lot.price = target
             out.append(f"• {title}: <code>{current:.0f}</code> → <b>{target:.0f}</b> ₽ · {html.escape(why)}")
             _log_row(lot.id, getattr(lot, "description", "") or "", current, target, floor, stats.get("cheapest") or 0, why, 0)
-            logger.info("[AutoPrice] #%s %s → %s (%s / %s)", lot.id, current, target, why, floor_why)
+            logger.info("[AutoPrice] #%s %s → %s (в форме %s; %s / %s)", lot.id, current, target, written, why, floor_why)
             time.sleep(3.5)
         except Exception as ex:
             err = str(ex).lower()
@@ -315,6 +400,8 @@ def hub_text(cardinal) -> str:
         "Смотрит чужие лоты в той же категории и двигает твою цену, чтобы купили быстрее.",
         "Ниже пола плюса (закупка × запас после комиссии FunPay) не опустит.",
         "Микролоты 1–10 ₽ (фишки / гайды / инструкции) <b>не трогает</b>.",
+        "Лот в закрепе не снижает (поднимать понемногу — <code>pinned_raise_pct</code>).",
+        "Свой минимум на лот: секция <code>[MinPrice]</code>, строка <code>ID_лота = цена</code>.",
         "",
         f"Сейчас: <b>{'вкл' if on else 'выкл'}</b>",
         f"Шаг вниз к рынку: <code>{cfg.get('undercut', '1')}</code> ₽ · макс. −{cfg.get('max_drop_pct', '25')}% за раз",
