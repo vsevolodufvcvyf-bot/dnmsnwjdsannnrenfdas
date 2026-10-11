@@ -21,7 +21,7 @@ if errorlevel 1 (
 )
 call %PY% -m pip install -q -r requirements.txt >>logs\pip_install.txt 2>&1
 if errorlevel 1 (
-  call %PY% -m pip install -q requests urllib3 pyTelegramBotAPI beautifulsoup4 colorama psutil requests-toolbelt python-dotenv pysocks >>logs\pip_install.txt 2>&1
+  call %PY% -m pip install -q requests urllib3 pyTelegramBotAPI beautifulsoup4 lxml bcrypt colorama psutil requests-toolbelt python-dotenv pysocks >>logs\pip_install.txt 2>&1
 )
 
 cls

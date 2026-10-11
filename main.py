@@ -3,7 +3,6 @@ import os
 import sys
 import time
 import traceback
-import subprocess
 
 if getattr(sys, "frozen", False):
     os.chdir(os.path.dirname(sys.executable))
@@ -24,33 +23,15 @@ def _write_crash(prefix: str = "") -> None:
     print("Падение записано в logs\\error.txt", file=sys.stderr)
 
 
-def _ensure_deps() -> None:
-    try:
-        import requests  # noqa: F401
-        return
-    except Exception:
-        pass
-    req = os.path.join(os.getcwd(), "requirements.txt")
-    log_path = os.path.join("logs", "pip_install.txt")
-    cmd = [sys.executable, "-m", "pip", "install", "-r", req]
-    with open(log_path, "a", encoding="utf-8") as log:
-        log.write("\n%s auto-install\n" % time.strftime("%Y-%m-%d %H:%M:%S"))
-        log.flush()
-        proc = subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT)
-    if proc.returncode != 0:
-        core = [
-            sys.executable, "-m", "pip", "install",
-            "requests", "urllib3", "pyTelegramBotAPI", "beautifulsoup4",
-            "colorama", "psutil", "requests-toolbelt", "python-dotenv", "pysocks",
-        ]
-        subprocess.check_call(core)
-
+from Utils import bootstrap
 
 try:
-    _ensure_deps()
+    bootstrap.ensure_deps()
 except Exception:
     _write_crash("Не удалось поставить пакеты Python")
     raise
+
+bootstrap.load_env()
 
 import Utils.cardinal_tools
 import Utils.config_loader as cfg_loader
@@ -79,6 +60,8 @@ folders = ["configs", "logs", "storage", "storage/cache", "storage/plugins", "st
 for i in folders:
     if not os.path.exists(i):
         os.makedirs(i)
+
+bootstrap.ensure_example_configs()
 
 files = ["configs/auto_delivery.cfg", "configs/auto_response.cfg"]
 for i in files:

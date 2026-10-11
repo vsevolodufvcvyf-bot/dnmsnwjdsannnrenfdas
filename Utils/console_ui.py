@@ -132,6 +132,7 @@ def print_splash(stage: str = "boot", extra: str = "") -> None:
     print(card_row("", m))
     print(card_row(y + APP_NAME + r + dim + "   " + TAGLINE + r, m))
     print(card_row(dim + "v" + VERSION + "    FunPay · Telegram · автоцена" + r, m))
+    print(card_row(dim + "на базе FunPay Cardinal · @sidor0912" + r, m))
     print(card_row("", m))
     print(card_sep(c))
     if stage in ("boot", "1"):
