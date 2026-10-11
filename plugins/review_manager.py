@@ -8,7 +8,7 @@ from threading import Thread
 from FunPayAPI.common.enums import MessageTypes
 from shop_core.bus import bot_send, notify
 from shop_core.db import get_db
-from shop_core.settings import ini_bool, flip_ini
+from shop_core.settings import flip_ini, ini_bool, set_ini
 from shop_core.plugin_settings import SettingsPage
 
 logger = logging.getLogger("FPC.ReviewManager")
@@ -58,7 +58,7 @@ def handle_good_review(cardinal, event):
             except Exception as e:
                 logger.debug(f"[ReviewManager] Не удалось отправить ответ: {e}")
 
-        if stars == 5 and ini_bool(CONFIG_FILE, "Review", "bonus_hour", True):
+        if stars == 5 and ini_bool(CONFIG_FILE, "Review", "bonus_hour", False):
             now = time.time()
             from shop_core.bus import peer_ids
             aid = getattr(getattr(cardinal, "account", None), "id", None)
@@ -94,14 +94,40 @@ def handle_good_review(cardinal, event):
 def on_review_event(cardinal, event):
     Thread(target=handle_good_review, args=(cardinal, event), daemon=True).start()
 
+RULES_NOTE = "FunPay запрещает поощрять покупателей за отзывы — бонус включай на свой риск."
+
+
+def _bonus_on() -> bool:
+    return ini_bool(CONFIG_FILE, "Review", "bonus_hour", False)
+
+
+def _toggle_bonus(_v) -> None:
+    new = not _bonus_on()
+    set_ini(CONFIG_FILE, "Review", "bonus_hour", "1" if new else "0")
+    if new:
+        set_ini(CONFIG_FILE, "Review", "bonus_rules_ack", "1")
+
+
+def _disable_bonus_once(cardinal) -> None:
+    """Один раз выключает бонус, включённый в старой версии, и объясняет почему."""
+    if not _bonus_on() or ini_bool(CONFIG_FILE, "Review", "bonus_rules_ack", False):
+        return
+    set_ini(CONFIG_FILE, "Review", "bonus_hour", "0")
+    try:
+        from shop_core.bus import notify
+        notify(cardinal, "⭐ Бонус +1 час аренды за 5★ выключен. " + RULES_NOTE +
+               " Включить обратно — в настройках плагина «Review Manager».", True)
+    except Exception:
+        logger.debug("TRACEBACK", exc_info=True)
+
+
 def init_settings(cardinal):
-    SettingsPage(UUID, NAME, "Ответ на 4–5★ и бонус +1 час аренды за 5★.") \
+    _disable_bonus_once(cardinal)
+    SettingsPage(UUID, NAME, "Ответ на 4–5★. Бонус за 5★ выключен по умолчанию: " + RULES_NOTE) \
         .add_toggle("enabled", "Автоответы на отзывы",
                     lambda: ini_bool(CONFIG_FILE, "Review", "enabled", True),
                     lambda _v: flip_ini(CONFIG_FILE, "Review", "enabled", True)) \
-        .add_toggle("bonus", "Бонус +1 час за 5★",
-                    lambda: ini_bool(CONFIG_FILE, "Review", "bonus_hour", True),
-                    lambda _v: flip_ini(CONFIG_FILE, "Review", "bonus_hour", True)) \
+        .add_toggle("bonus", "Бонус +1 час за 5★ (риск по правилам FunPay)", _bonus_on, _toggle_bonus) \
         .attach(cardinal)
 
 
