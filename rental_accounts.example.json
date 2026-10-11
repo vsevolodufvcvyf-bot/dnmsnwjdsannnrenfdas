@@ -1,0 +1,14 @@
+[
+  {
+    "id": 1,
+    "name": "CS2 Prime #1",
+    "login": "steam_login_here",
+    "password": "steam_password_here",
+    "shared_secret": "из .maFile",
+    "identity_secret": "из .maFile",
+    "steamid": "7656119XXXXXXXXXX",
+    "lot_keywords": ["cs2", "prime"],
+    "bound_lots": [],
+    "isRented": false
+  }
+]

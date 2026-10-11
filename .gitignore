@@ -1,0 +1,28 @@
+# Секреты и личные данные: в git и в архивы не попадают никогда.
+.env
+configs/
+mafiles/*
+!mafiles/README.txt
+*.maFile
+rental_accounts.json
+storage/
+logs/
+unhandled_queries.log
+*.db
+*.db-wal
+*.db-shm
+*.db.gz
+
+# Python / IDE / сборка
+__pycache__/
+*.pyc
+.pytest_cache/
+venv/
+venv2/
+.venv/
+.venv2/
+.idea/
+.vscode/
+build/
+dist/
+*.zip
