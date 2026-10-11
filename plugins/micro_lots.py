@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 
 from telebot.types import InlineKeyboardMarkup as K, InlineKeyboardButton as B, CallbackQuery, Message
 
