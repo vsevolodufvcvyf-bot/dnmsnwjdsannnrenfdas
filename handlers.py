@@ -581,7 +581,7 @@ def deliver_goods(c: Cardinal, e: NewOrderEvent, *args):
     except Exception as exc:
         logger.error(
             f"Произошла ошибка при получении товаров для заказа $YELLOW{e.order.id}: {str(exc)}$RESET")  # locale
-        logger.debug("TRACEBACK", exc)
+        logger.debug("TRACEBACK", exc_info=True)
         setattr(e, "error", 1)
         setattr(e, "error_text",
                 f"Произошла ошибка при получении товаров для заказа {e.order.id}: {str(exc)}")  # locale

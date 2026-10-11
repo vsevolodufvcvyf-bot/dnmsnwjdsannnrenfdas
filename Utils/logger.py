@@ -168,6 +168,8 @@ def configure_logging() -> logging.handlers.QueueListener:
 
     log_queue = queue.SimpleQueue()
     queue_handler = _QueueHandler(log_queue)
+    from Utils.log_redact import install as install_redaction
+    install_redaction(queue_handler)
 
     for name in LOGGER_NAMES:
         logger = logging.getLogger(name)
@@ -183,5 +185,10 @@ def configure_logging() -> logging.handlers.QueueListener:
         log_queue, cli_handler, file_handler, plain_handler, respect_handler_level=True
     )
     listener.start()
-    atexit.register(listener.stop)
+    atexit.register(_stop_listener, listener)
     return listener
+
+
+def _stop_listener(listener: logging.handlers.QueueListener) -> None:
+    if getattr(listener, "_thread", None) is not None:
+        listener.stop()
