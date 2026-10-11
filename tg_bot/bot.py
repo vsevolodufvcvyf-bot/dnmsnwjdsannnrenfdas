@@ -43,6 +43,8 @@ class TGBot:
                                        "http": cardinal.MAIN_CFG["Telegram"]["proxy"]}
         self.bot = telebot.TeleBot(self.cardinal.MAIN_CFG["Telegram"]["token"], parse_mode="HTML",
                                    allow_sending_without_reply=True, num_threads=5)
+        from Utils.tg_html import install as install_safe_html
+        install_safe_html(self.bot)
 
         self.file_handlers = {}  # хэндлеры, привязанные к получению файла.
         self.attempts = {}  # {user_id: attempts} - попытки авторизации в Telegram ПУ.

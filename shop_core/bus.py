@@ -392,11 +392,24 @@ def notify(cardinal, text: str, critical: bool = False, keyboard=None) -> None:
             tg.send_notification(text)
 
 
+DIGEST_MAX_ITEMS = 100
+
+
+def digest_text(texts: list[str], max_items: int = DIGEST_MAX_ITEMS) -> str:
+    head = "🌅 <b>Утренний дайджест</b>"
+    if len(texts) > max_items:
+        head += f"\nПоказаны последние {max_items} из {len(texts)}."
+        texts = texts[-max_items:]
+    return head + "\n\n" + "\n\n".join(texts)
+
+
 def drain_digest(cardinal) -> None:
+    """Сообщения тихих часов одним дайджестом. Удаляются только отправленные записи и только после отправки."""
     with get_db() as conn:
         rows = conn.execute("SELECT id, text FROM notify_digest ORDER BY id ASC").fetchall()
-        conn.execute("DELETE FROM notify_digest")
     if not rows:
         return
-    blob = "🌅 <b>Утренний дайджест</b>\n\n" + "\n\n".join(r["text"] for r in rows[-30:])
-    notify(cardinal, blob, critical=True)
+    last_id = int(rows[-1]["id"])
+    notify(cardinal, digest_text([r["text"] for r in rows]), critical=True)
+    with get_db() as conn:
+        conn.execute("DELETE FROM notify_digest WHERE id <= ?", (last_id,))
