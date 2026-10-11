@@ -755,7 +755,9 @@ class Account:
 
         balances = parser.find("select", {"name": "method"})
         if not balances:
-            return types.Balance(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+            empty = types.Balance(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+            empty.source = "unknown"
+            return empty
         def _bal(key: str) -> float:
             try:
                 return float(balances.get(key) or 0)

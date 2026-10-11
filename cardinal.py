@@ -374,14 +374,20 @@ class Cardinal(object):
                     FunPayAPI.enums.SubCategoryTypes.COMMON, subcat_id,
                 ) or []
                 if lots:
-                    return self.account.get_balance(lots[0].id)
+                    bal = self.account.get_balance(lots[0].id)
+                    if not hasattr(bal, "source"):
+                        bal.source = "exact"
+                    return bal
         except Exception:
             logger.debug("TRACEBACK", exc_info=True)
         total = float(getattr(self.account, "total_balance", 0) or 0)
         if total:
             logger.info("баланс FunPay с главной страницы: %s", total)
-            return FunPayAPI.types.Balance(total, total, 0.0, 0.0, 0.0, 0.0)
-        logger.info("баланс FunPay 0 — на витрине нет лотов, с которых можно снять сумму")
+            approx = FunPayAPI.types.Balance(total, total, 0.0, 0.0, 0.0, 0.0)
+            approx.source = "approx"
+            return approx
+        logger.info("баланс FunPay не получен — на витрине нет лотов, с которых можно снять сумму")
+        empty.source = "unknown"
         return empty
 
     # Прочее

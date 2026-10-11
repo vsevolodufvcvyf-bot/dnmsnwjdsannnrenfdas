@@ -226,8 +226,9 @@ def _try_buy(cardinal, row: dict, cfg) -> None:
             _LAST[key] = time.time() - 7200 + 120
         return
     min_rub = float(cfg.get("min_funpay_rub", 0) or 0)
-    bal = getattr(getattr(cardinal, "balance", None), "total_rub", 0) or 0
-    if min_rub and float(bal) < min_rub:
+    balance = getattr(cardinal, "balance", None)
+    bal = getattr(balance, "total_rub", 0) or 0
+    if min_rub and getattr(balance, "source", "exact") != "unknown" and float(bal) < min_rub:
         notify(cardinal, f"📦 Склад «{lot}» пуст, но на FunPay мало денег ({bal} ₽). Пополни баланс.", True)
         return
     cands = candidates_from_suppliers(lot)

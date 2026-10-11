@@ -192,6 +192,13 @@ def wallet_kb() -> K:
     return kb
 
 
+def balance_source(bal) -> str:
+    """exact — со страницы вывода, approx — только общий баланс с главной, unknown — не получен."""
+    if bal is None:
+        return "unknown"
+    return getattr(bal, "source", "exact")
+
+
 def get_balance_text(cardinal) -> str:
     bal = getattr(cardinal, "balance", None)
     total = float(getattr(bal, "total_rub", 0) or 0) if bal else 0.0
@@ -206,12 +213,24 @@ def get_balance_text(cardinal) -> str:
     mn = withdraw_min_rub()
     freeze = "заморожена" if is_frozen() else "живая"
     panic = "стоп" if is_panic() else "ок"
+    source = balance_source(bal)
+    if source == "unknown":
+        money = ["⚠️ FunPay не отдал баланс — цифр нет (это не ноль). Нажми «🔄 Обновить» или проверь на сайте."]
+    elif source == "approx":
+        money = [
+            f"На счёте        ≈ <code>{total:.2f}</code> ₽ (с главной страницы)",
+            "Сколько можно вывести — неизвестно: нужен хотя бы один активный лот на витрине.",
+        ]
+    else:
+        money = [
+            f"На счёте          <code>{total:.2f}</code> ₽",
+            f"Можно вывести     <code>{avail:.2f}</code> ₽",
+            f"Удержано          <code>{held:.2f}</code> ₽",
+        ]
     lines = [
         "💰 <b>Кошелёк FunPay</b>",
         "┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄",
-        f"На счёте          <code>{total:.2f}</code> ₽",
-        f"Можно вывести     <code>{avail:.2f}</code> ₽",
-        f"Удержано          <code>{held:.2f}</code> ₽",
+        *money,
         f"$ <code>{usd:.2f}</code>  ·  € <code>{eur:.2f}</code>",
         f"Открытых сделок: <b>{sales}</b>  ·  сессия {freeze}  ·  {panic}",
         "",
@@ -344,7 +363,7 @@ def _hold_loop(cardinal) -> None:
             if is_frozen() or is_panic():
                 continue
             bal = cardinal.get_balance(attempts=2)
-            if not bal or not float(getattr(bal, "total_rub", 0) or 0):
+            if balance_source(bal) != "exact" or not float(getattr(bal, "total_rub", 0) or 0):
                 continue
             cardinal.balance = bal
             held = max(0.0, float(bal.total_rub or 0) - float(bal.available_rub or 0))
@@ -489,7 +508,14 @@ def init_post(cardinal):
                 bot.send_message(m.chat.id, f"Минимум вывода FunPay: <code>{mn:.0f}</code> ₽.", parse_mode="HTML")
                 return
             bal = getattr(cardinal, "balance", None)
-            avail = float(getattr(bal, "available_rub", 0) or 0) if bal else 0.0
+            if balance_source(bal) != "exact":
+                bot.send_message(
+                    m.chat.id,
+                    "Не знаю, сколько доступно к выводу: FunPay не отдал точный баланс. "
+                    "Нажми «🔄 Обновить» в кошельке и попробуй снова.",
+                )
+                return
+            avail = float(getattr(bal, "available_rub", 0) or 0)
             if amount > avail + 0.01:
                 bot.send_message(
                     m.chat.id,

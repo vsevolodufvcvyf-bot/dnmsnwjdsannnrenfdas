@@ -104,6 +104,13 @@ def home_text(cardinal) -> str:
         badge = f"🔴  FunPay заморожен · <code>{freeze_reason}</code>"
     else:
         badge = "🟢  магазин в работе"
+    source = getattr(bal, "source", "exact") if bal is not None else "unknown"
+    if source == "unknown":
+        money_line = "💰  баланс FunPay не получен"
+    elif source == "approx":
+        money_line = f"💰  ≈ <b>{rub:.0f}</b> ₽    к выводу: неизвестно"
+    else:
+        money_line = f"💰  <b>{rub:.0f}</b> ₽    к выводу  {avail:.0f} ₽"
     apr = "выкл"
     try:
         from shop_core.settings import ini_bool
@@ -115,7 +122,7 @@ def home_text(cardinal) -> str:
         f"{HR}\n"
         f"{badge}\n\n"
         f"👤  {name}   <code>#{uid}</code>\n"
-        f"💰  <b>{rub:.0f}</b> ₽    к выводу  {avail:.0f} ₽\n"
+        f"{money_line}\n"
         f"📦  лотов  <b>{n_lots}</b>    сделки  {sales}\n"
         f"⚖️  автоцена  <b>{apr}</b>\n\n"
         f"<i>Автоцена двигает лоты под рынок и оставляет плюс. "
