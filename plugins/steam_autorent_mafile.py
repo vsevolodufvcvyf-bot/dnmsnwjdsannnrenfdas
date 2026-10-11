@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
+import html
 import os
 import re
 import time
@@ -101,40 +102,75 @@ def format_duration_readable(seconds: int) -> str:
     rem_mins = (seconds % 3600) // 60
     return f"{hours} ч. {rem_mins} мин." if rem_mins > 0 else f"{hours} ч."
 
-def parse_duration_from_order(order_desc: str, order_amount: int = 1) -> int:
-    text = (order_desc or "").lower()
+_UNIT = r"(ч\b|час\w*|h\b|hours?\b|д\b|дн\w*|день|сут\w*|d\b|days?\b|нед\w*|w\b|weeks?\b)"
+_TAG_RE = re.compile(r"\[\s*(?:rent|аренда|срок)\s*:?\s*(\d+)\s*" + _UNIT + r"\s*\]", re.IGNORECASE)
+_PHRASE_RES = [
+    re.compile(r"аренд\w*\s+на\s+(\d+)\s*" + _UNIT, re.IGNORECASE),
+    re.compile(r"(\d+)\s*" + _UNIT + r"\s+аренд\w*", re.IGNORECASE),
+    re.compile(r"срок\w*\s*(?:аренды)?\s*[:\-—]?\s*(\d+)\s*" + _UNIT, re.IGNORECASE),
+    re.compile(r"\bна\s+(\d+)\s*" + _UNIT, re.IGNORECASE),
+]
+_WORD_RES = [
+    (re.compile(r"аренд\w*\s+на\s+сутки|\bна\s+сутки", re.IGNORECASE), 86400),
+    (re.compile(r"аренд\w*\s+на\s+недел\w*|\bна\s+недел[юи]", re.IGNORECASE), 604800),
+    (re.compile(r"аренд\w*\s+на\s+час\b|\bна\s+час\b|\bна\s+1\s+час\b", re.IGNORECASE), 3600),
+]
+
+
+def _unit_seconds(unit: str) -> int:
+    u = unit.lower()
+    if u.startswith(("ч", "h")):
+        return 3600
+    if u.startswith(("н", "w")):
+        return 604800
+    return 86400
+
+
+def parse_rent_duration(order_desc: str, order_amount: int = 1, max_hours: int = 336) -> tuple[int | None, str]:
+    """Срок аренды в секундах и откуда он взят. None — срок непонятен, автоматически не выдаём.
+
+    Берётся только явный тег [rent: 3h] или фраза про аренду («аренда на 3 часа», «2 дня аренды»).
+    Любое «N часов» больше не считается сроком: «2500 часов в игре» давало аренду на 2500 часов.
+    """
+    text = order_desc or ""
     amount = max(1, int(order_amount or 1))
-    base_sec = None
+    base, how = None, ""
+    m = _TAG_RE.search(text)
+    if m:
+        base, how = int(m.group(1)) * _unit_seconds(m.group(2)), f"тег «{m.group(0)}»"
+    if base is None:
+        for rx in _PHRASE_RES:
+            m = rx.search(text)
+            if m:
+                base, how = int(m.group(1)) * _unit_seconds(m.group(2)), f"фраза «{m.group(0).strip()}»"
+                break
+    if base is None:
+        for rx, seconds in _WORD_RES:
+            m = rx.search(text)
+            if m:
+                base, how = seconds, f"фраза «{m.group(0).strip()}»"
+                break
+    if not base:
+        return None, "в названии лота нет срока аренды (нужен тег вида [rent: 3h] или «аренда на 3 часа»)"
+    total = base * amount
+    if total > max(1, int(max_hours)) * 3600:
+        return None, f"срок {total // 3600} ч больше лимита {max_hours} ч ({how})"
+    return total, how
 
-    tag_m = re.search(r'\[(?:rent|аренда|срок):\s*(\d+)\s*(h|ч|hour|d|д|day|w|нед)\]', text)
-    if tag_m:
-        val, u = int(tag_m.group(1)), tag_m.group(2)
-        if u in ['h', 'ч', 'hour']: base_sec = val * 3600
-        elif u in ['d', 'д', 'day']: base_sec = val * 86400
-        elif u in ['w', 'нед']: base_sec = val * 604800
 
-    if not base_sec:
-        h_m = re.search(r'(\d+)\s*(?:час\w*|ч\b|h\b|hours?\b)', text)
-        if h_m: base_sec = int(h_m.group(1)) * 3600
+def parse_duration_from_order(order_desc: str, order_amount: int = 1) -> int:
+    seconds, _how = parse_rent_duration(order_desc, order_amount, _cfg_int("max_rent_hours", 336))
+    return seconds or 0
 
-    if not base_sec:
-        d_m = re.search(r'(\d+)\s*(?:день|дня|дней|дн\b|сут\w*|days?\b)', text)
-        if d_m: base_sec = int(d_m.group(1)) * 86400
 
-    if not base_sec:
-        w_m = re.search(r'(\d+)\s*(?:недел\w*|нед\b|weeks?\b)', text)
-        if w_m: base_sec = int(w_m.group(1)) * 604800
+def _cfg_int(key: str, default: int) -> int:
+    from shop_core.settings import load_ini
+    cfg = load_ini(CONFIG_FILE)
+    try:
+        return int(cfg.get("AutoRent", key, fallback=str(default)) or default)
+    except ValueError:
+        return default
 
-    if not base_sec:
-        if re.search(r'\bсутк\w*', text):
-            base_sec = 86400
-        elif re.search(r'\bнедел[яюи]\b|\bweek\b', text):
-            base_sec = 604800
-
-    if not base_sec:
-        base_sec = 2 * 3600
-
-    return base_sec * amount
 
 def sync_lots_visibility(cardinal):
     try:
@@ -162,7 +198,8 @@ def free_accounts_for_order(order_text: str = "") -> list[dict]:
     order_lower = (order_text or "").lower()
     with get_db() as conn:
         rows = conn.execute("""
-            SELECT account_id, account_name, login, password, shared_secret, bound_lots, lot_keywords, is_rented, expire_time
+            SELECT account_id, account_name, login, password, shared_secret, bound_lots, lot_keywords, is_rented, expire_time,
+                   COALESCE(needs_reset, 0) AS needs_reset
             FROM mafile_rentals ORDER BY account_id ASC
         """).fetchall()
     ranked: list[dict] = []
@@ -170,7 +207,7 @@ def free_accounts_for_order(order_text: str = "") -> list[dict]:
     for r in rows:
         is_free = (not r["is_rented"]) or (r["expire_time"] and r["expire_time"] <= now)
         pwd = str(r["password"] or "").strip()
-        if not is_free or len(pwd) < 2:
+        if not is_free or len(pwd) < 2 or r["needs_reset"]:
             continue
         keywords = []
         if r["lot_keywords"]:
@@ -253,8 +290,8 @@ def reserve_account(account_id, duration_sec, renter_chat_id, renter_name, order
     with get_db() as conn:
         cur = conn.execute("""
             UPDATE mafile_rentals
-            SET is_rented = 1, renter_chat_id = ?, renter_name = ?, order_id = ?, duration_seconds = ?, start_time = ?, expire_time = ?, warned_15m = 0, renter_node = ?
-            WHERE account_id = ? AND (is_rented = 0 OR expire_time <= ?)
+            SET is_rented = 1, renter_chat_id = ?, renter_name = ?, order_id = ?, duration_seconds = ?, start_time = ?, expire_time = ?, warned_15m = 0, renter_node = ?, codes_given = 0
+            WHERE account_id = ? AND (is_rented = 0 OR expire_time <= ?) AND COALESCE(needs_reset, 0) = 0
         """, (renter_chat_id, renter_name, order_id, duration_sec, now, exp, (renter_node or "")[:80], account_id, now))
         if cur.rowcount == 1:
             return True
@@ -374,7 +411,20 @@ def _handle_new_rental_order(cardinal, event):
         buyer_chat = getattr(order, "chat_id", None)
         amount = getattr(order, "amount", 1) or 1
 
-        duration_sec = parse_duration_from_order(desc, amount)
+        duration_sec, duration_how = parse_rent_duration(desc, amount, _cfg_int("max_rent_hours", 336))
+        if not duration_sec:
+            if buyer_chat:
+                bot_send(cardinal, buyer_chat,
+                         f"Здравствуйте, {buyer_name}! Заказ #{order_id} принят, продавец сейчас подключится и выдаст аккаунт.")
+            notify(
+                cardinal,
+                f"⚠️ <b>AutoRent #{html.escape(str(order_id))}: выдаю вручную</b>\n"
+                f"Причина: {html.escape(duration_how)}.\n"
+                f"Лот: <i>{html.escape(desc[:200])}</i>\n"
+                f"Добавь в название лота тег <code>[rent: 3h]</code> (или «аренда на 3 часа») — тогда выдача пойдёт сама.",
+                True,
+            )
+            return
         duration_readable = format_duration_readable(duration_sec)
 
         acc = get_free_account_for_order(desc)
@@ -382,8 +432,12 @@ def _handle_new_rental_order(cardinal, event):
             warn_msg = f"Здравствуйте, {buyer_name}! Заказ #{order_id} принят. Свободных слотов сейчас нет, продавец подключится вручную."
             if buyer_chat:
                 bot_send(cardinal, buyer_chat, warn_msg)
-            if cardinal.telegram:
-                cardinal.telegram.send_notification(f"⚠️ <b>[AutoRent] Нет свободных аккаунтов!</b>\nЗаказ: <code>#{order_id}</code> от <b>{buyer_name}</b>")
+            notify(
+                cardinal,
+                f"⚠️ <b>[AutoRent] Нет свободных аккаунтов!</b>\nЗаказ: <code>#{html.escape(str(order_id))}</code> "
+                f"от <b>{html.escape(str(buyer_name))}</b>\n{_slots_summary()}",
+                True,
+            )
             return
 
         if not claim_delivery(str(order_id), "autorent"):
@@ -496,7 +550,7 @@ def _handle_guard_msg(cardinal, event):
             if ids and name:
                 q = ",".join("?" * len(ids))
                 c.execute(
-                    f"""SELECT account_id, account_name, login, shared_secret, expire_time
+                    f"""SELECT account_id, account_name, login, shared_secret, expire_time, COALESCE(codes_given, 0) AS codes_given, order_id
                         FROM mafile_rentals
                         WHERE is_rented = 1 AND expire_time > ?
                           AND (renter_chat_id IN ({q}) OR lower(renter_name) = lower(?))""",
@@ -505,14 +559,14 @@ def _handle_guard_msg(cardinal, event):
             elif ids:
                 q = ",".join("?" * len(ids))
                 c.execute(
-                    f"""SELECT account_id, account_name, login, shared_secret, expire_time
+                    f"""SELECT account_id, account_name, login, shared_secret, expire_time, COALESCE(codes_given, 0) AS codes_given, order_id
                         FROM mafile_rentals
                         WHERE is_rented = 1 AND expire_time > ? AND renter_chat_id IN ({q})""",
                     (now, *ids),
                 )
             else:
                 c.execute(
-                    """SELECT account_id, account_name, login, shared_secret, expire_time
+                    """SELECT account_id, account_name, login, shared_secret, expire_time, COALESCE(codes_given, 0) AS codes_given, order_id
                        FROM mafile_rentals
                        WHERE is_rented = 1 AND expire_time > ? AND lower(renter_name) = lower(?)""",
                     (now, name),
@@ -521,6 +575,23 @@ def _handle_guard_msg(cardinal, event):
 
         if not row:
             return
+
+        limit = _cfg_int("max_codes_per_rent", 10)
+        given = int(row["codes_given"] or 0)
+        if limit > 0 and given >= limit:
+            if given == limit:
+                with get_db() as conn:
+                    conn.execute("UPDATE mafile_rentals SET codes_given = codes_given + 1 WHERE account_id = ?",
+                                 (row["account_id"],))
+                notify(cardinal, f"🛡️ AutoRent #{html.escape(str(row['order_id'] or '—'))}: арендатор "
+                                 f"{html.escape(name or '—')} исчерпал лимит кодов ({limit}) для "
+                                 f"{html.escape(str(row['account_name']))}. Проверь, не пытается ли он сменить пароль.", True)
+            bot_send(cardinal, chat_id, "Лимит кодов на эту аренду исчерпан. Если не получается войти — напиши продавцу.",
+                     msg.chat_name)
+            return
+        with get_db() as conn:
+            conn.execute("UPDATE mafile_rentals SET codes_given = COALESCE(codes_given, 0) + 1 WHERE account_id = ?",
+                         (row["account_id"],))
 
         fresh_code = generate_steam_guard_code(row["shared_secret"])
         rem_sec = int(row["expire_time"] - now)
@@ -532,31 +603,132 @@ def _handle_guard_msg(cardinal, event):
     except Exception as ex:
         logger.error(f"[Steam AutoRent] Ошибка выдачи кода в чате: {ex}")
 
+def _reset_kb(account_id) -> K:
+    kb = K()
+    kb.row(B("✅ Пароль сменил, сессии сбросил — открыть слот", callback_data=f"{CBT_PREFIX}:reset:{account_id}"))
+    return kb
+
+
+def _slots_summary() -> str:
+    now = time.time()
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT is_rented, expire_time, COALESCE(needs_reset, 0) AS needs_reset, password FROM mafile_rentals"
+        ).fetchall()
+    total = len(rows)
+    busy = sum(1 for r in rows if r["is_rented"] and (r["expire_time"] or 0) > now)
+    reset = sum(1 for r in rows if r["needs_reset"])
+    nopass = sum(1 for r in rows if len(str(r["password"] or "").strip()) < 2)
+    free = max(0, total - busy - reset - nopass)
+    return (f"Слотов: <b>{total}</b> | занято: <b>{busy}</b> | свободно: <b>{free}</b> | "
+            f"ждут смены пароля: <b>{reset}</b> | без пароля: <b>{nopass}</b>")
+
+
+def release_expired(cardinal, now: float | None = None) -> list[dict]:
+    """Закрывает истёкшие аренды. Слот остаётся закрытым до смены пароля (require_reset=1)."""
+    now = time.time() if now is None else now
+    need_reset = 1 if _cfg_int("require_reset", 1) else 0
+    with get_db() as conn:
+        expired = [dict(r) for r in conn.execute(
+            """SELECT account_id, account_name, login, renter_chat_id, renter_name, renter_node, order_id
+               FROM mafile_rentals WHERE is_rented = 1 AND expire_time <= ?""", (now,),
+        ).fetchall()]
+        for r in expired:
+            conn.execute(
+                """UPDATE mafile_rentals
+                   SET is_rented = 0, renter_chat_id = NULL, renter_name = NULL, order_id = NULL, renter_node = NULL,
+                       needs_reset = ?, codes_given = 0, last_renter = ?
+                   WHERE account_id = ?""",
+                (need_reset, r["renter_name"], r["account_id"]),
+            )
+    for r in expired:
+        dest = (r["renter_node"] or "").strip() or r["renter_chat_id"]
+        if dest:
+            bot_send(cardinal, dest, f"Время аренды ({r['account_name']}) вышло. Если всё ок — зайди в покупки. Удачи.")
+        logger.info("[Steam AutoRent] Аккаунт #%s освобожден по таймеру.", r["account_id"])
+        if need_reset:
+            notify(
+                cardinal,
+                f"🔐 <b>Аренда закончилась: {html.escape(str(r['account_name']))}</b> (слот {r['account_id']}, "
+                f"арендатор {html.escape(str(r['renter_name'] or '—'))}).\n"
+                f"Слот закрыт, пока не сменишь пароль: прошлый арендатор знает пароль и мог остаться в аккаунте.\n"
+                f"1. Смени пароль Steam и нажми «Выйти на всех устройствах» в Steam Guard.\n"
+                f"2. Пришли боту <code>/rentpass {r['account_id']} новый_пароль</code> — слот откроется сам.\n"
+                f"Или нажми кнопку, если пароль уже сменён другим способом.",
+                True,
+                keyboard=_reset_kb(r["account_id"]),
+            )
+    return expired
+
+
 def _timer_loop(cardinal):
     while True:
         try:
-            now = time.time()
-            with get_db() as conn:
-                c = conn.cursor()
-                c.execute("SELECT account_id, account_name, renter_chat_id, renter_name, renter_node FROM mafile_rentals WHERE is_rented = 1 AND expire_time <= ?", (now,))
-                expired = c.fetchall()
-
-                for r in expired:
-                    c.execute(
-                        "UPDATE mafile_rentals SET is_rented = 0, renter_chat_id = NULL, renter_name = NULL, order_id = NULL, renter_node = NULL WHERE account_id = ?",
-                        (r["account_id"],),
-                    )
-                    dest = (r["renter_node"] or "").strip() or r["renter_chat_id"]
-                    if dest:
-                        bot_send(cardinal, dest, f"Время аренды ({r['account_name']}) вышло. Если всё ок — зайди в покупки. Удачи.")
-                    logger.info(f"[Steam AutoRent] Аккаунт #{r['account_id']} освобожден по таймеру.")
-
+            expired = release_expired(cardinal)
             if expired:
                 sync_lots_visibility(cardinal)
-
         except Exception as ex:
             logger.error(f"[Steam AutoRent Timer] Ошибка таймера: {ex}")
         time.sleep(15)
+
+
+def seed_from_mafiles(folder: str = "mafiles") -> int:
+    """Каждый .maFile — слот аренды. Пароля в maFile нет: слот откроется после /rentpass."""
+    if not os.path.isdir(folder):
+        return 0
+    added = 0
+    with get_db() as conn:
+        known = conn.execute("SELECT account_id, lower(COALESCE(login, '')) AS login, "
+                             "lower(COALESCE(account_name, '')) AS name, COALESCE(steamid, '') AS steamid "
+                             "FROM mafile_rentals").fetchall()
+        logins = {r["login"] for r in known} | {r["name"] for r in known}
+        steamids = {str(r["steamid"]) for r in known if r["steamid"]}
+        next_id = max([int(r["account_id"]) for r in known] + [0]) + 1
+        for name in sorted(os.listdir(folder)):
+            if not name.lower().endswith(".mafile"):
+                continue
+            try:
+                data = json.loads(open(os.path.join(folder, name), encoding="utf-8").read())
+            except Exception as ex:
+                logger.warning("[AutoRent] %s: не читается (%s)", name, ex)
+                continue
+            login = str(data.get("account_name") or "").strip()
+            secret = str(data.get("shared_secret") or "").strip()
+            steamid = str((data.get("Session") or {}).get("SteamID") or "").strip()
+            if not login or not secret:
+                continue
+            if login.lower() in logins or (steamid and steamid in steamids):
+                continue
+            conn.execute(
+                """INSERT INTO mafile_rentals
+                   (account_id, account_name, login, password, shared_secret, identity_secret, steamid, lot_keywords)
+                   VALUES (?, ?, ?, '', ?, ?, ?, '[]')""",
+                (next_id, login, login, secret, str(data.get("identity_secret") or ""), steamid),
+            )
+            logins.add(login.lower())
+            if steamid:
+                steamids.add(steamid)
+            next_id += 1
+            added += 1
+    if added:
+        logger.info("[AutoRent] из mafiles добавлено слотов: %s (задай пароль: /rentpass <id> <пароль>)", added)
+    return added
+
+
+def set_rent_password(account_id: int, password: str) -> bool:
+    with get_db() as conn:
+        cur = conn.execute(
+            "UPDATE mafile_rentals SET password = ?, needs_reset = 0 WHERE account_id = ?",
+            (password, int(account_id)),
+        )
+        return cur.rowcount == 1
+
+
+def reopen_slot(account_id: int) -> bool:
+    with get_db() as conn:
+        cur = conn.execute("UPDATE mafile_rentals SET needs_reset = 0 WHERE account_id = ?", (int(account_id),))
+        return cur.rowcount == 1
+
 
 _TIMER_STARTED = False
 
@@ -574,26 +746,74 @@ def on_order_rent(cardinal, event):
 def on_msg_guard(cardinal, event):
     Thread(target=_handle_guard_msg, args=(cardinal, event), daemon=True).start()
 
+_TG_READY = False
+
+
+def _can_manage(cardinal, uid: int) -> bool:
+    tg = getattr(cardinal, "telegram", None)
+    return bool(tg) and uid in getattr(tg, "authorized_users", {})
+
+
 def init_settings(cardinal):
+    global _TG_READY
     from shop_core import hooks
     hooks.subscribe("on_unfreeze", resume_parked_rentals)
     seed_accounts_if_empty()
-    def status():
-        now = time.time()
-        with get_db() as conn:
-            c = conn.cursor()
-            c.execute("SELECT COUNT(*) FROM mafile_rentals")
-            total = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM mafile_rentals WHERE is_rented = 1 AND expire_time > ?", (now,))
-            busy = c.fetchone()[0]
-        return f"Слотов: <b>{total}</b> | занято: <b>{busy}</b> | свободно: <b>{total - busy}</b>"
+    seed_from_mafiles()
 
     SettingsPage(UUID, NAME, "Выдача Steam + Guard-код по слову «код». maFile в папке mafiles.") \
         .add_toggle("enabled", "Автоаренда",
                     lambda: ini_bool(CONFIG_FILE, "AutoRent", "enabled", True),
                     lambda _v: flip_ini(CONFIG_FILE, "AutoRent", "enabled", True)) \
-        .set_status(status) \
+        .add_toggle("reset", "После аренды закрывать слот до смены пароля",
+                    lambda: ini_bool(CONFIG_FILE, "AutoRent", "require_reset", True),
+                    lambda _v: flip_ini(CONFIG_FILE, "AutoRent", "require_reset", True)) \
+        .set_status(_slots_summary) \
         .attach(cardinal)
+
+    tg = getattr(cardinal, "telegram", None)
+    if _TG_READY or not tg or not getattr(tg, "bot", None):
+        return
+    _TG_READY = True
+    bot = tg.bot
+
+    def cmd_rentpass(m):
+        if not _can_manage(cardinal, m.from_user.id):
+            return
+        try:
+            bot.delete_message(m.chat.id, m.id)
+        except Exception:
+            pass
+        parts = (m.text or "").split(maxsplit=2)
+        if len(parts) < 3 or not parts[1].isdigit() or len(parts[2].strip()) < 2:
+            bot.send_message(m.chat.id, "Формат: <code>/rentpass ID_слота новый_пароль</code>\n" + _slots_summary(),
+                             parse_mode="HTML")
+            return
+        if set_rent_password(int(parts[1]), parts[2].strip()):
+            bot.send_message(m.chat.id, f"✅ Пароль слота {parts[1]} обновлён, слот открыт. Сообщение с паролем удалил.")
+            Thread(target=sync_lots_visibility, args=(cardinal,), daemon=True).start()
+        else:
+            bot.send_message(m.chat.id, f"Слота {parts[1]} нет.\n" + _slots_summary(), parse_mode="HTML")
+
+    def cb_reset(c):
+        if not _can_manage(cardinal, c.from_user.id):
+            return
+        parts = (c.data or "").split(":")
+        if len(parts) != 3 or not parts[2].isdigit():
+            bot.answer_callback_query(c.id)
+            return
+        ok = reopen_slot(int(parts[2]))
+        bot.answer_callback_query(c.id, "Слот открыт." if ok else "Слот не найден.")
+        if ok:
+            try:
+                bot.edit_message_text(f"✅ Слот {parts[2]} снова свободен для аренды.", c.message.chat.id, c.message.id)
+            except Exception:
+                pass
+            Thread(target=sync_lots_visibility, args=(cardinal,), daemon=True).start()
+
+    tg.msg_handler(cmd_rentpass, commands=["rentpass"])
+    tg.cbq_handler(cb_reset, lambda c: (c.data or "").startswith(f"{CBT_PREFIX}:reset:"))
+    cardinal.add_telegram_commands(UUID, [("rentpass", "пароль слота аренды Steam", True)])
 
 
 BIND_TO_PRE_INIT = [init_settings]

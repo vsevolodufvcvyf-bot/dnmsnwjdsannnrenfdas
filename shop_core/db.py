@@ -191,6 +191,9 @@ def init_db():
         """)
         _migrate_pending(c)
         _ensure_column(c, "mafile_rentals", "renter_node", "TEXT")
+        _ensure_column(c, "mafile_rentals", "needs_reset", "INTEGER DEFAULT 0")
+        _ensure_column(c, "mafile_rentals", "codes_given", "INTEGER DEFAULT 0")
+        _ensure_column(c, "mafile_rentals", "last_renter", "TEXT")
         c.execute("""
             CREATE TABLE IF NOT EXISTS chat_aliases (
                 alias TEXT PRIMARY KEY,

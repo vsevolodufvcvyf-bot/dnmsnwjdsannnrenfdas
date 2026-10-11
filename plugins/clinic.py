@@ -50,6 +50,14 @@ def scan(cardinal) -> tuple[list[str], list[str], list[str]]:
         ok.append("Сессия FunPay: ключ на месте")
     else:
         bad.append("Нет golden_key в configs/_main.cfg — бот не зайдёт на FunPay")
+    try:
+        if cfg and cfg.has_section("Proxy") and cfg["Proxy"].getboolean("enable", fallback=False):
+            ok.append("Прокси для FunPay включён")
+        elif cfg:
+            warn.append("Прокси для FunPay выключен. Отдельный прокси снижает риск блокировки "
+                        "за «подозрительную активность» с одного IP.")
+    except Exception:
+        logger.debug("TRACEBACK", exc_info=True)
 
     if is_frozen():
         bad.append(f"FunPay заморожен: {get_flag('freeze_reason') or 'причина не записана'}")
@@ -133,13 +141,21 @@ def scan(cardinal) -> tuple[list[str], list[str], list[str]]:
             empty = conn.execute(
                 "SELECT COUNT(*) AS n FROM mafile_rentals WHERE length(trim(coalesce(password,''))) < 2"
             ).fetchone()["n"]
+            locked = conn.execute(
+                "SELECT COUNT(*) AS n FROM mafile_rentals WHERE COALESCE(needs_reset, 0) = 1"
+            ).fetchone()["n"]
         if total and empty:
             warn.append(
                 f"Аренда Steam: у {empty} из {total} аккаунтов нет пароля — слот покупателю не выдастся. "
-                "Пропиши пароль в карточке аккаунта / rental_accounts.json."
+                "Задай пароль: /rentpass ID пароль."
+            )
+        if locked:
+            warn.append(
+                f"Аренда Steam: {locked} слот(ов) ждут смены пароля после аренды. "
+                "Смени пароль и пришли /rentpass ID новый_пароль."
             )
     except Exception:
-        pass
+        logger.debug("TRACEBACK", exc_info=True)
 
     plugins = getattr(cardinal, "plugins", {}) or {}
     enabled = sum(1 for p in plugins.values() if getattr(p, "enabled", True))
