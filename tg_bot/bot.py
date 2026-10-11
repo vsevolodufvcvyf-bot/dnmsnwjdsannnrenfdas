@@ -1288,6 +1288,13 @@ class TGBot:
             BotCommand("panels", "панель API"),
             BotCommand("methods", "как продавать"),
             BotCommand("panic", "аварийный стоп"),
+            BotCommand("orders", "заказы в работе"),
+            BotCommand("stuck", "неподтверждённые заказы"),
+            BotCommand("calc", "калькулятор цен пачек"),
+            BotCommand("export", "выгрузка продаж CSV"),
+            BotCommand("lots_backup", "бэкап лотов в файл"),
+            BotCommand("rentpass", "пароль слота аренды"),
+            BotCommand("team", "команда пульта"),
             BotCommand("logs", "скачать логи"),
         ]
         try:
