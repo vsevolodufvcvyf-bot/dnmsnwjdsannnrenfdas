@@ -2,7 +2,7 @@
 """Имя и подписи магазина. Меняется в одном месте — видно везде."""
 APP_NAME = "nnanserShop"
 TAGLINE = "панель продавца FunPay"
-VERSION = "1.7.0"
+VERSION = "1.8.0"
 UPSTREAM_NAME = "FunPay Cardinal"
 UPSTREAM_URL = "https://github.com/sidor0912/FunPayCardinal"
 UPSTREAM_BASE_VERSION = "0.1.17.15"

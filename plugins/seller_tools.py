@@ -26,7 +26,7 @@ logger = logging.getLogger("FPC.SellerTools")
 
 NAME = "Инструменты продавца"
 VERSION = "1.0.0"
-DESCRIPTION = "Зависшие заказы и текст тикета, бэкап лотов, выгрузка продаж CSV, калькулятор цен, заказы в работе"
+DESCRIPTION = "Зависшие заказы, бэкап лотов, CSV, калькулятор, черновик текста лота"
 CREDITS = "nnanserShop"
 UUID = "7ab19607-2c0f-4294-877b-fa22e40ccf91"
 SETTINGS_PAGE = True
@@ -35,6 +35,22 @@ BIND_TO_COMMANDS = {}
 
 CONFIG_FILE = "configs/seller_tools.cfg"
 CB = "TOOLS:"
+
+
+def _llm_ready() -> bool:
+    return bool(os.getenv("OPENROUTER_KEY", "").strip() or os.getenv("YANDEX_API_KEY", "").strip())
+
+
+def _lot_llm():
+    from plugins.ai_funpay_ultimate import call_llm
+    from shop_core.lotcopy import llm_messages
+
+    def ask(product: str, hint: str) -> str | None:
+        return call_llm(llm_messages(product, hint), timeout=12)
+
+    return ask
+
+
 PACKS = (50, 100, 250, 500, 1000, 2500, 5000)
 SUPPORT_URL = "https://support.funpay.com/"
 _READY = False
@@ -298,7 +314,7 @@ def _hub_kb():
     kb = K()
     kb.row(B("📋 Заказы", callback_data=f"{CB}orders"), B("⏳ Зависшие", callback_data=f"{CB}stuck"))
     kb.row(B("📦 Бэкап лотов", callback_data=f"{CB}lots"), B("📊 Продажи CSV", callback_data=f"{CB}export"))
-    kb.row(B("🧮 Калькулятор", callback_data=f"{CB}calc"))
+    kb.row(B("🧮 Калькулятор", callback_data=f"{CB}calc"), B("📝 Текст лота", callback_data=f"{CB}lot"))
     return kb
 
 
@@ -312,7 +328,7 @@ def init_pre(cardinal):
                     lambda: ini_bool(CONFIG_FILE, "SellerTools", "stuck_report", True),
                     lambda _v: set_ini(CONFIG_FILE, "SellerTools", "stuck_report",
                                        "0" if ini_bool(CONFIG_FILE, "SellerTools", "stuck_report", True) else "1")) \
-        .set_status(lambda: "Команды: /orders /stuck /lots_backup /export /calc") \
+        .set_status(lambda: "Команды: /orders /stuck /lots_backup /export /calc /lottext") \
         .attach(cardinal)
     cardinal.add_telegram_commands(UUID, [
         ("orders", "заказы в работе", True),
@@ -320,6 +336,7 @@ def init_pre(cardinal):
         ("lots_backup", "бэкап лотов в файл", True),
         ("export", "выгрузка продаж CSV", True),
         ("calc", "калькулятор цен пачек", True),
+        ("lottext", "черновик текста лота", True),
     ])
     tg = getattr(cardinal, "telegram", None)
     if _READY or not tg or not getattr(tg, "bot", None):
@@ -384,6 +401,31 @@ def init_pre(cardinal):
 
     tg.msg_handler(guarded(cmd_calc), commands=["calc"])
 
+    def cmd_lot(m):
+        from shop_core.lotcopy import LotDraftError, format_lot_message, lot_text, parse_lot_args
+        product, hint = parse_lot_args(m.text or "")
+        if len(product) < 2:
+            bot.send_message(
+                m.chat.id,
+                "Что продаёшь?\n<code>/lottext 1000 робуксов</code>\n"
+                "С уточнением: <code>/lottext 100 звёзд | выдача по логину</code>",
+                parse_mode="HTML",
+            )
+            return
+        llm = _lot_llm() if _llm_ready() else None
+        try:
+            draft = lot_text(product, hint, llm=llm)
+        except LotDraftError:
+            bot.send_message(
+                m.chat.id,
+                "В тексте есть слова, которые лучше не ставить на витрину: отзыв, скидка, ссылка, контакт. "
+                "Убери их и пришли ещё раз.",
+            )
+            return
+        bot.send_message(m.chat.id, format_lot_message(draft), parse_mode="HTML")
+
+    tg.msg_handler(guarded(cmd_lot), commands=["lottext"])
+
     def cb(c):
         if not _ok(cardinal, c.from_user.id):
             return
@@ -401,6 +443,12 @@ def init_pre(cardinal):
             Thread(target=_lots_backup, args=(cardinal, chat_id), daemon=True).start()
         elif action == "calc":
             bot.send_message(chat_id, "Напиши: <code>/calc цена_за_1_шт наценка_% [комиссия_%]</code>", parse_mode="HTML")
+        elif action == "lot":
+            bot.send_message(
+                chat_id,
+                "Напиши товар:\n<code>/lottext 1000 робуксов</code>",
+                parse_mode="HTML",
+            )
 
     tg.cbq_handler(cb, lambda c: (c.data or "").startswith(CB))
 

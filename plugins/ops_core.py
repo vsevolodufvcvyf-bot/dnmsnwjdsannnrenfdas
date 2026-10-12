@@ -217,7 +217,7 @@ def _stats_text(cardinal) -> str:
     with get_db() as conn:
         row = conn.execute(
             """SELECT COALESCE(SUM(sale_price),0), COALESCE(SUM(cost),0), COALESCE(SUM(profit),0), COUNT(*)
-               FROM finance_log WHERE created_at > ?""",
+               FROM finance_log WHERE created_at > ? AND dry_run = 0""",
             (time.time() - 86400 * 30,),
         ).fetchone()
         sales, cost, profit, n = row

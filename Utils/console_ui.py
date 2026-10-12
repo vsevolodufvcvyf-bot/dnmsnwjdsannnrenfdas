@@ -6,7 +6,14 @@ import os
 import re
 import sys
 
-from colorama import Fore, Style
+try:
+    from colorama import Fore, Style
+except Exception:  # консоль должна открыться и до установки пакетов
+    class _Plain:
+        def __getattr__(self, _name):
+            return ""
+
+    Fore = Style = _Plain()
 
 INNER = 66
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*[mK]")
@@ -110,53 +117,68 @@ def print_block(text: str) -> None:
     print(flush=True)
 
 
-def print_splash(stage: str = "boot", extra: str = "") -> None:
+def _fail_count(fails: str) -> int:
+    try:
+        return max(0, int(fails or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def print_splash(stage: str = "boot", extra: str = "", fails: str = "") -> None:
     try:
         import colorama
         colorama.init(autoreset=False, convert=True)
     except Exception:
         pass
     enable_windows_console()
-    from Utils.brand import APP_NAME, TAGLINE, VERSION
+    from Utils.brand import TAGLINE, VERSION
     c = Fore.CYAN + Style.BRIGHT
     m = Fore.MAGENTA + Style.BRIGHT
     y = Fore.YELLOW + Style.BRIGHT
     g = Fore.GREEN + Style.BRIGHT
     dim = Fore.WHITE + Style.DIM
     r = Style.RESET_ALL
-    letters = "  ".join(list(APP_NAME))
+    bar = m + "▰" * 11 + r + c + "▰" * 11 + r
     print(flush=True)
     print(card_top(m))
     print(card_row("", m))
-    print(card_row(m + letters + r, m))
-    print(card_row("", m))
-    print(card_row(y + APP_NAME + r + dim + "   " + TAGLINE + r, m))
-    print(card_row(dim + "v" + VERSION + "    FunPay · Telegram · автоцена" + r, m))
-    print(card_row(dim + "на базе FunPay Cardinal · @sidor0912" + r, m))
+    print(card_row(m + "N N A N S E R" + r + "    " + c + "S H O P" + r, m))
+    print(card_row(bar, m))
+    print(card_row(y + TAGLINE + r + dim + "     v" + VERSION + r, m))
+    print(card_row(dim + "FunPay  ·  Telegram  ·  автоцена" + r, m))
+    print(card_row(dim + "на базе FunPay Cardinal  ·  @sidor0912" + r, m))
     print(card_row("", m))
     print(card_sep(c))
     if stage in ("boot", "1"):
-        print(card_row(c + "  1/2  " + r + "пакеты Python"))
-        print(card_row(dim + "      тихо, лог → logs\\pip_install.txt" + r))
+        print(card_row(y + "  ○ ● ○   " + r + "ставлю пакеты Python"))
+        print(card_row(dim + "          тихо, лог → logs\\pip_install.txt" + r))
     elif stage in ("go", "2"):
-        print(card_row(g + "  2/2  " + r + "магазин поднимается"))
-        print(card_row(y + "      /menu" + r + "     пульт"))
-        print(card_row(y + "      автоцена" + r + "  лоты под рынок, в плюсе"))
-        print(card_row(y + "      /check" + r + "    напишет, только если нужно"))
-        print(card_row(dim + "      стоп: Ctrl+C" + r))
+        if extra == "cached":
+            print(card_row(g + "  ● ● ○   " + r + "пакеты уже стоят, установку пропустил"))
+        else:
+            print(card_row(g + "  ● ● ○   " + r + "пакеты проверены"))
+        print(card_row(g + "          " + r + "магазин поднимается"))
+        print(card_row(y + "          /menu" + r + "    пульт"))
+        print(card_row(y + "          /goal" + r + "    цель на день"))
+        print(card_row(y + "          /hours" + r + "   когда покупают"))
+        print(card_row(dim + "          стоп: Ctrl+C" + r))
     elif stage in ("down", "stop"):
         code = extra or "?"
-        if str(code) in ("0", "3221225786"):
-            print(card_row(y + "  пауза  " + r + "перезапуск через 5 сек"))
+        nfail = _fail_count(fails)
+        if nfail >= 3:
+            print(card_row(y + "  ● ● ●   " + r + "три сбоя подряд — останавливаюсь"))
+            print(card_row(dim + "          смотри logs\\error.txt и запусти снова" + r))
+        elif str(code) in ("0", "3221225786"):
+            print(card_row(y + "  пауза   " + r + "перезапуск через 5 сек"))
         else:
-            print(card_row(y + "  остановка  " + r + f"код {code}"))
-            print(card_row(dim + "      смотри logs\\error.txt" + r))
-        print(card_row(dim + "      перезапуск через 5 сек" + r))
+            print(card_row(y + "  сбой    " + r + f"код {code}   ·   {nfail} из 3"))
+            print(card_row(dim + "          смотри logs\\error.txt" + r))
+            print(card_row(dim + "          перезапуск через 5 сек" + r))
     else:
-        print(card_row(g + "  ●  " + r + "/menu   кошелёк · автоцена · проверка"))
-        print(card_row(g + "  ●  " + r + "микролоты 5–10 ₽ автоцена не двигает"))
-        print(card_row(g + "  ●  " + r + "логи     logs\\error.txt"))
-        print(card_row(dim + "      Ctrl+C — стоп" + r))
+        print(card_row(g + "  ●       " + r + "/menu    кошелёк · сегодня · автоцена"))
+        print(card_row(g + "  ●       " + r + "/goal    цель по чистым за день"))
+        print(card_row(g + "  ●       " + r + "логи     logs\\error.txt"))
+        print(card_row(dim + "          Ctrl+C — стоп" + r))
     print(card_row(""))
     print(card_bot(m))
     print(flush=True)

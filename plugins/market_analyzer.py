@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import configparser
 import logging
+import time
 import math
 import os
 import re
@@ -15,8 +16,10 @@ from telebot.types import InlineKeyboardMarkup as K, InlineKeyboardButton as B, 
 
 from shop_core.settings import commission
 from shop_core.plugin_settings import SettingsPage
+from shop_core.pricing import section_coef, seller_price_for
 from shop_core.panels import margin_report
 
+WAIT_TTL = 600
 logger = logging.getLogger("FPC.MarketAnalyzer")
 
 NAME = "Цена рынка"
@@ -50,7 +53,7 @@ def ask_price(bot, chat_id: int, uid: int) -> None:
         clear_all_waits(uid)
     except Exception:
         logger.debug("TRACEBACK", exc_info=True)
-    _WAIT[int(uid)] = {"mode": "desc"}
+    _WAIT[int(uid)] = {"at": time.time(), "mode": "desc"}
     bot.send_message(
         chat_id,
         "📈 <b>За сколько выставлять?</b>\n\n"
@@ -244,7 +247,9 @@ def analyze_query(cardinal, subcategory, query: str, our_cost: float = 0.0, unde
     q1 = prices[max(0, n // 4)]
     if rec < q1:
         rec = q1
-    net = rec * (1.0 - commission())
+    coef = section_coef(cardinal, subcategory.id)
+    form = seller_price_for(rec, coef) if coef else None
+    net = form if form is not None else rec * (1.0 - commission())
     margin = net - float(our_cost or 0)
     warn = ""
     if our_cost and margin <= 0:
@@ -260,9 +265,18 @@ def analyze_query(cardinal, subcategory, query: str, our_cost: float = 0.0, unde
         f"Средняя: <code>{avg:.2f}</code> · медиана: <code>{med:.2f}</code>",
         f"У кого есть продажи (отзывы), медиана: <code>{live_med:.2f}</code>",
         "",
-        f"💡 <b>Ставь: {rec:.2f}</b>",
-        f"После комиссии FunPay останется ≈ <code>{net:.2f}</code>",
     ]
+    if form is not None:
+        lines += [
+            f"💡 Покупатель должен видеть: <b>{rec:.2f}</b>",
+            f"✍️ В форму лота впиши: <b>{form:.2f}</b> (комиссия раздела ≈ {(coef - 1) * 100:.1f}%)",
+            f"На баланс придёт: <code>{net:.2f}</code>",
+        ]
+    else:
+        lines += [
+            f"💡 <b>Ставь: {rec:.2f}</b> (это цена, которую видит покупатель)",
+            f"После комиссии останется ≈ <code>{net:.2f}</code> — точную комиссию раздела FunPay не отдал",
+        ]
     if our_cost:
         lines.append(f"Себестоимость: <code>{our_cost:.2f}</code> · чистыми ≈ <b>{margin:.2f}</b>")
     lines.append(warn)
@@ -306,18 +320,23 @@ def analyze(cardinal, subcategory_id: int, lot_type: str, our_cost: float, under
     rec = max(mn, med - float(undercut or 0))
     if rec <= 0:
         rec = mn
-    net = rec * (1.0 - commission())
+    coef = section_coef(cardinal, subcategory_id) if sc_type is SubCategoryTypes.COMMON else None
+    form = seller_price_for(rec, coef) if coef else None
+    net = form if form is not None else rec * (1.0 - commission())
     margin = net - float(our_cost or 0)
     warn = ""
     if our_cost and margin <= 0:
         warn = "\n⚠️ Маржа ≤ 0."
+    form_line = (f"✍️ В форму лота: <b>{form:.2f}</b> (комиссия ≈ {(coef - 1) * 100:.1f}%)\n"
+                 if form is not None else "")
     text = (
         f"📈 <b>Витрина</b> /lots/{subcategory_id}/\n"
         f"Лотов с ценой: <b>{n}</b>\n"
         f"Мин <code>{mn:.2f}</code> · макс <code>{mx:.2f}</code>\n"
         f"Средняя <code>{avg:.2f}</code> · медиана <code>{med:.2f}</code>\n"
-        f"💡 Ставь: <code>{rec:.2f}</code>\n"
-        f"После комиссии: <code>{net:.2f}</code>\n"
+        f"💡 Покупатель видит: <code>{rec:.2f}</code>\n"
+        f"{form_line}"
+        f"На баланс: <code>{net:.2f}</code>\n"
         f"Себестоимость: <code>{our_cost:.2f}</code> · чистыми <b>{margin:.2f}</b>{warn}"
     )
     try:
@@ -346,7 +365,7 @@ def init_post(cardinal):
             return
         rest = (m.text or "").split(maxsplit=1)
         if len(rest) > 1:
-            _WAIT[m.from_user.id] = {"mode": "desc"}
+            _WAIT[m.from_user.id] = {"at": time.time(), "mode": "desc"}
             _handle_desc(m, rest[1])
             return
         ask_price(bot, m.chat.id, m.from_user.id)
@@ -379,6 +398,9 @@ def init_post(cardinal):
 
     def _is_wait_text(m: Message) -> bool:
         if not m.from_user or m.from_user.id not in _WAIT:
+            return False
+        if time.time() - float((_WAIT.get(m.from_user.id) or {}).get("at", 0)) > WAIT_TTL:
+            _WAIT.pop(m.from_user.id, None)
             return False
         text = (m.text or "").strip()
         if not text or text.startswith("/"):
@@ -431,9 +453,9 @@ def init_post(cardinal):
                 "Напиши игру и тип, например: <code>Steam аренда</code> или <code>CS2 аккаунт</code>.",
                 parse_mode="HTML",
             )
-            _WAIT[m.from_user.id] = {"mode": "desc"}
+            _WAIT[m.from_user.id] = {"at": time.time(), "mode": "desc"}
             return
-        _WAIT[m.from_user.id] = {"mode": "pick", "query": query, "cats": {str(c.id): c for c in cats}}
+        _WAIT[m.from_user.id] = {"at": time.time(), "mode": "pick", "query": query, "cats": {str(c.id): c for c in cats}}
         kb = K()
         for sc in cats:
             label = (getattr(sc, "fullname", None) or sc.name)[:64]
@@ -477,7 +499,7 @@ def init_post(cardinal):
             text = analyze_query(cardinal, sc, query, 0, 0)
         except Exception as ex:
             text = f"Не удалось снять витрину: {ex}"
-        _WAIT[c.from_user.id] = {"mode": "cost", "sub": sc, "query": query}
+        _WAIT[c.from_user.id] = {"at": time.time(), "mode": "cost", "sub": sc, "query": query}
         bot.send_message(c.message.chat.id, text, parse_mode="HTML", disable_web_page_preview=True)
 
 

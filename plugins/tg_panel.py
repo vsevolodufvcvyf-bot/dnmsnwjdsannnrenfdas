@@ -9,7 +9,8 @@ from telebot.types import Message, CallbackQuery
 
 from tg_bot import utils as tg_utils
 from tg_bot.panel_ui import (
-    BTN_APR, BTN_BAL, BTN_CHECK, BTN_DRY, BTN_HOME, BTN_MORE, BTN_OK, BTN_PANIC, BTN_PRICE, BTN_STATS, BTN_STOCK,
+    BTN_APR, BTN_BAL, BTN_CHECK, BTN_DAY, BTN_DRY, BTN_HOME, BTN_HOURS, BTN_MORE, BTN_OK, BTN_PANIC,
+    BTN_PRICE, BTN_STATS, BTN_STOCK,
     home_kb, home_text, reply_keyboard, send_home,
 )
 from shop_core.settings import is_dry_run, set_flag
@@ -90,6 +91,20 @@ def init_pre(cardinal):
         if not _ok(cardinal, m.from_user.id):
             return
         send_home(tg, m)
+
+    @bot.message_handler(func=lambda m: bool(m.text) and m.text.strip() == BTN_DAY)
+    def _day(m: Message):
+        if not _ok(cardinal, m.from_user.id):
+            return
+        from plugins.shop_desk import day_text
+        bot.send_message(m.chat.id, day_text(cardinal), parse_mode="HTML")
+
+    @bot.message_handler(func=lambda m: bool(m.text) and m.text.strip() == BTN_HOURS)
+    def _hours(m: Message):
+        if not _ok(cardinal, m.from_user.id):
+            return
+        from plugins.raise_clock import demand_text
+        bot.send_message(m.chat.id, demand_text(), parse_mode="HTML")
 
     @bot.message_handler(func=lambda m: bool(m.text) and m.text.strip() == BTN_MORE)
     def _more(m: Message):
@@ -251,6 +266,22 @@ def init_pre(cardinal):
                 "📈 <b>Витрина</b>\nКоманда: /market ID_категории себестоимость\nПример: <code>/market 209 120</code>",
                 parse_mode="HTML",
             )
+        elif action == "hours":
+            from plugins.raise_clock import demand_text
+            bot.send_message(c.message.chat.id, demand_text(), parse_mode="HTML")
+        elif action == "goal":
+            from shop_core.goals import goal_help
+            bot.send_message(c.message.chat.id, goal_help(), parse_mode="HTML")
+        elif action == "lot":
+            bot.send_message(
+                c.message.chat.id,
+                "📝 <b>Текст лота</b>\n"
+                "<code>/lottext 1000 робуксов</code>\n"
+                "С уточнением: <code>/lottext 100 звёзд | выдача по логину</code>\n"
+                "Бот лот сам не публикует. Если задан ключ нейросети — черновик поправит она, "
+                "иначе соберётся шаблон.",
+                parse_mode="HTML",
+            )
         try:
             bot.answer_callback_query(c.id)
         except Exception:
@@ -271,7 +302,11 @@ def init_post(cardinal):
         return
     try:
         tg.bot.send_message(oid, home_text(cardinal), reply_markup=home_kb(cardinal), parse_mode="HTML")
-        tg.bot.send_message(oid, "⌨️ Кошелёк · проверка · цена — кнопки внизу.", reply_markup=reply_keyboard())
+        tg.bot.send_message(
+            oid,
+            "Кнопки внизу: главная, кошелёк, сегодня, автоцена, часы спроса.",
+            reply_markup=reply_keyboard(),
+        )
     except Exception as ex:
         logger.debug("[TgPanel] welcome: %s", ex)
 

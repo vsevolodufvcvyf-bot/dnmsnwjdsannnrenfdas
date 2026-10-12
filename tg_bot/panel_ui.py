@@ -27,6 +27,8 @@ BTN_OK = "▶️ В работу"
 BTN_DRY = "🧪 Учёба"
 BTN_MORE = "📂 Ещё"
 BTN_STATS = "📊 Статы"
+BTN_DAY = "☀️ Сегодня"
+BTN_HOURS = "🕐 Часы"
 
 HR = "━━━━━━━━━━━━━━━━"
 
@@ -34,14 +36,15 @@ HR = "━━━━━━━━━━━━━━━━"
 def all_reply_labels() -> set[str]:
     return {
         BTN_HOME, BTN_PRICE, BTN_STOCK, BTN_BAL, BTN_CHECK, BTN_APR,
-        BTN_PANIC, BTN_OK, BTN_DRY, BTN_MORE, BTN_STATS,
+        BTN_PANIC, BTN_OK, BTN_DRY, BTN_MORE, BTN_STATS, BTN_DAY, BTN_HOURS,
     }
 
 
 def reply_keyboard() -> ReplyKeyboardMarkup:
     kb = ReplyKeyboardMarkup(resize_keyboard=True, is_persistent=True)
-    kb.row(KeyboardButton(BTN_HOME), KeyboardButton(BTN_BAL), KeyboardButton(BTN_APR))
-    kb.row(KeyboardButton(BTN_CHECK), KeyboardButton(BTN_PRICE), KeyboardButton(BTN_MORE))
+    kb.row(KeyboardButton(BTN_HOME), KeyboardButton(BTN_BAL), KeyboardButton(BTN_DAY))
+    kb.row(KeyboardButton(BTN_APR), KeyboardButton(BTN_CHECK), KeyboardButton(BTN_PRICE))
+    kb.row(KeyboardButton(BTN_HOURS), KeyboardButton(BTN_STOCK), KeyboardButton(BTN_MORE))
     return kb
 
 
@@ -57,6 +60,41 @@ def clear_all_waits(uid: int) -> None:
             getattr(m, attr)(uid)
         except Exception:
             pass
+
+
+def _shortage_line(cardinal) -> str:
+    if not getattr(cardinal, "AD_CFG", None):
+        return ""
+    try:
+        from plugins.auto_restock import iter_stock
+        low = 0
+        for row in iter_stock(cardinal):
+            if row.get("infinite"):
+                continue
+            if int(row.get("count") or 0) < 2:
+                low += 1
+        if low:
+            return f"📦  мало на складе: <b>{low}</b>"
+    except Exception:
+        logger.debug("TRACEBACK", exc_info=True)
+    return ""
+
+
+def _today_block() -> str:
+    try:
+        from shop_core.goals import goal_line, today_totals
+        _sales, _cost, profit, n = today_totals()
+        line = f"☀️  сегодня  {n} сдел. · чистыми <b>{profit:.0f}</b> ₽\n{goal_line(profit)}"
+    except Exception:
+        logger.debug("TRACEBACK", exc_info=True)
+        return ""
+    try:
+        from plugins.raise_clock import plan
+        _hours, why = plan()
+        line += "\n🕐  " + html.escape(why)
+    except Exception:
+        logger.debug("TRACEBACK", exc_info=True)
+    return line
 
 
 def home_text(cardinal) -> str:
@@ -111,6 +149,8 @@ def home_text(cardinal) -> str:
         money_line = f"💰  ≈ <b>{rub:.0f}</b> ₽    к выводу: неизвестно"
     else:
         money_line = f"💰  <b>{rub:.0f}</b> ₽    к выводу  {avail:.0f} ₽"
+    today = _today_block()
+    low = _shortage_line(cardinal)
     apr = "выкл"
     try:
         from shop_core.settings import ini_bool
@@ -124,14 +164,20 @@ def home_text(cardinal) -> str:
         f"👤  {name}   <code>#{uid}</code>\n"
         f"{money_line}\n"
         f"📦  лотов  <b>{n_lots}</b>    сделки  {sales}\n"
-        f"⚖️  автоцена  <b>{apr}</b>\n\n"
-        f"<i>Автоцена двигает лоты под рынок и оставляет плюс. "
-        f"Микролоты 5–10 ₽ не трогает. ИИ не зовёт из‑за «кода».</i>"
+        f"⚖️  автоцена  <b>{apr}</b>\n"
+        + (f"\n{today}\n" if today else "\n")
+        + (f"{low}\n" if low else "")
+        + "\n<i>/goal — цель на день · /hours — когда покупают · /lottext — текст лота</i>"
     )
 
 
 def home_kb(cardinal) -> K:
     kb = K()
+    kb.row(
+        B("☀️ Сегодня", callback_data="SHOP:day"),
+        B("🕐 Часы", callback_data="PANEL:hours"),
+        B("🎯 Цель", callback_data="PANEL:goal"),
+    )
     kb.row(B("·  деньги  ·", callback_data=CBT.EMPTY))
     kb.row(B("💰 Кошелёк", callback_data="PANEL:bal"), B("💸 Вывод", callback_data="WAL:out"))
     kb.row(B("·  витрина  ·", callback_data=CBT.EMPTY))
@@ -168,7 +214,11 @@ def settings_page2() -> K:
 
 def send_home(tg, m: Message) -> None:
     clear_all_waits(m.from_user.id)
-    tg.bot.send_message(m.chat.id, "клавиатура внизу — кошелёк · автоцена · проверка", reply_markup=reply_keyboard())
+    tg.bot.send_message(
+        m.chat.id,
+        "Кнопки внизу: главная, кошелёк, сегодня, автоцена, часы спроса.",
+        reply_markup=reply_keyboard(),
+    )
     tg.bot.send_message(
         m.chat.id,
         home_text(tg.cardinal),

@@ -37,7 +37,7 @@ def test_setup_commands_uses_valid_names(monkeypatch):
     names = [c.command for c in captured["cmds"]]
     assert len(names) == len(set(names)) <= 100
     assert all(re.fullmatch(r"[a-z0-9_]{1,32}", n) for n in names), names
-    assert {"orders", "stuck", "calc", "rentpass"} <= set(names)
+    assert {"orders", "stuck", "calc", "rentpass", "day", "goal", "hours", "lottext"} <= set(names)
 
 
 def test_unauthorized_click_by_invited_username_only_requests(monkeypatch):

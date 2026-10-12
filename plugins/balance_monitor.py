@@ -19,6 +19,7 @@ from shop_core.settings import (
     is_dry_run, is_panic, withdraw_fee_pct, withdraw_min_rub,
 )
 
+WAIT_TTL = 600
 logger = logging.getLogger("FPC.BalanceMonitor")
 
 NAME = "Кошелёк FunPay"
@@ -448,6 +449,9 @@ def init_post(cardinal):
     def _is_wal_text(m: Message) -> bool:
         if not m.from_user or m.from_user.id not in _WAIT:
             return False
+        if time.time() - float((_WAIT.get(m.from_user.id) or {}).get("at", 0)) > WAIT_TTL:
+            _WAIT.pop(m.from_user.id, None)
+            return False
         text = (m.text or "").strip()
         if not text or text.startswith("/"):
             return False
@@ -489,6 +493,7 @@ def init_post(cardinal):
             except Exception:
                 logger.debug("TRACEBACK", exc_info=True)
             st["mode"] = "sum"
+            st["at"] = time.time()
             _WAIT[m.from_user.id] = st
             mn = withdraw_min_rub()
             bot.send_message(
@@ -525,6 +530,7 @@ def init_post(cardinal):
                 return
             st["amount"] = amount
             st["mode"] = "confirm"
+            st["at"] = time.time()
             _WAIT[m.from_user.id] = st
             bot.send_message(m.chat.id, _summary(st), reply_markup=confirm_kb(), parse_mode="HTML")
             return
@@ -564,7 +570,7 @@ def init_post(cardinal):
             way = parts[2]
             if way not in ("sbp", "card"):
                 return
-            _WAIT[c.from_user.id] = {"way": way, "mode": "dest"}
+            _WAIT[c.from_user.id] = {"at": time.time(), "way": way, "mode": "dest"}
             bot.send_message(c.message.chat.id, _dest_prompt(way, ""), parse_mode="HTML")
             return
         if action == "bank" and len(parts) > 2:
@@ -577,6 +583,7 @@ def init_post(cardinal):
             st["way"] = "sbp"
             st["bank"] = key
             st["mode"] = "dest"
+            st["at"] = time.time()
             _WAIT[c.from_user.id] = st
             bot.send_message(c.message.chat.id, _dest_prompt("sbp", key), parse_mode="HTML")
             return
@@ -585,7 +592,8 @@ def init_post(cardinal):
                 bot.send_message(c.message.chat.id, _owner_hint())
                 return
             st = _WAIT.get(c.from_user.id) or {}
-            if st.get("mode") != "confirm" or not st.get("dest") or not st.get("amount"):
+            stale = time.time() - float(st.get("at", 0) or 0) > WAIT_TTL
+            if stale or st.get("mode") != "confirm" or not st.get("dest") or not st.get("amount"):
                 bot.send_message(c.message.chat.id, "Сначала пройди шаги вывода заново.")
                 clear_wait(c.from_user.id)
                 return

@@ -110,14 +110,19 @@ def _ask_after_arm(cardinal, armed):
         logger.error("[DigitalFulfill] ask: %s", ex)
 
 
-def on_order(cardinal, event):
+def _process_order(cardinal, event):
     try:
         armed = _arm_order(cardinal, event)
     except Exception as ex:
         logger.error("[DigitalFulfill] %s", ex)
         return
     if armed:
-        Thread(target=_ask_after_arm, args=(cardinal, armed), daemon=True).start()
+        _ask_after_arm(cardinal, armed)
+
+
+def on_order(cardinal, event):
+    """Подбор панели ходит в её API (до 10 с) — не держим обработку события FunPay."""
+    Thread(target=_process_order, args=(cardinal, event), daemon=True).start()
 
 
 def on_message(cardinal, event):

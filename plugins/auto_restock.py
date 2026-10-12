@@ -38,7 +38,7 @@ def load_cfg():
         cfg.read(CONFIG_FILE, encoding="utf-8")
     if not cfg.has_section("Restock"):
         cfg["Restock"] = {
-            "enabled": "1",
+            "enabled": "0",
             "min_stock": "2",
             "buy_qty": "5",
             "check_every_sec": "90",
@@ -170,11 +170,18 @@ def stock_text(cardinal) -> str:
             total = c.fetchone()[0]
             c.execute("SELECT COUNT(*) FROM mafile_rentals WHERE is_rented = 1 AND expire_time > ?", (now,))
             busy = c.fetchone()[0]
-        free = total - busy
-        lines.append(f"\n🎮 Steam-аренда: свободно <b>{free}</b> · занято <b>{busy}</b> · всего {total}")
+            c.execute(
+                "SELECT COUNT(*) FROM mafile_rentals WHERE NOT (is_rented = 1 AND expire_time > ?) "
+                "AND (COALESCE(needs_reset, 0) = 1 OR length(trim(coalesce(password, ''))) < 2)",
+                (now,),
+            )
+            blocked = c.fetchone()[0]
+        free = max(0, total - busy - blocked)
+        extra = f" · закрыто {blocked} (нет пароля или ждут смены)" if blocked else ""
+        lines.append(f"\n🎮 Steam-аренда: свободно <b>{free}</b> · занято <b>{busy}</b> · всего {total}{extra}")
     except Exception:
         logger.debug("TRACEBACK", exc_info=True)
-    on = cfg.get("enabled", "1") in ("1", "true", "yes", "on")
+    on = cfg.get("enabled", "0") in ("1", "true", "yes", "on")
     lines.append("")
     lines.append("🔁 Автопополнение: <b>вкл</b>" if on else "🔁 Автопополнение: выкл")
     lines.append("Когда товар кончится, бот смотрит цену твоего лота на FunPay и закупает у панели с запасом x2.")
@@ -403,7 +410,7 @@ def _poll_task(cardinal, row: dict, key: str, task) -> None:
 
 def check_once(cardinal) -> None:
     cfg = load_cfg()
-    if cfg.get("enabled", "1") not in ("1", "true", "yes", "on"):
+    if cfg.get("enabled", "0") not in ("1", "true", "yes", "on"):
         return
     min_stock = int(cfg.get("min_stock", 2) or 2)
     for row in iter_stock(cardinal):
@@ -427,7 +434,7 @@ def _loop(cardinal):
 def init_settings(cardinal):
     SettingsPage(UUID, NAME, "Склад. Если товар кончился — закупка у поставщика (не банк).") \
         .add_toggle("enabled", "Автопополнение склада",
-                    lambda: ini_bool(CONFIG_FILE, "Restock", "enabled", True),
+                    lambda: ini_bool(CONFIG_FILE, "Restock", "enabled", False),
                     lambda v: set_ini(CONFIG_FILE, "Restock", "enabled", "1" if v else "0")) \
         .set_status(lambda: stock_text(cardinal)) \
         .attach(cardinal)

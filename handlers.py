@@ -551,6 +551,17 @@ def send_new_order_notification_handler(c: Cardinal, e: NewOrderEvent, *args):
             delivery_info = _("ntfc_new_order_will_be_delivered")
     text = _("ntfc_new_order", f"{utils.escape(e.order.description)}, {utils.escape(e.order.subcategory_name)}",
              e.order.buyer_username, f"{e.order.price} {e.order.currency}", e.order.id, delivery_info)
+    try:
+        from shop_core.dossier import dossier_block, note_seen
+        note_seen(
+            e.order.id, e.order.buyer_username, e.order.price,
+            getattr(e.order, "description", "") or "", None, e.order.currency,
+        )
+        block = dossier_block(e.order.buyer_username)
+        if block:
+            text += "\n\n" + block
+    except Exception:
+        logger.debug("TRACEBACK", exc_info=True)
 
     chat = c.account.get_chat_by_name(e.order.buyer_username)
     if chat:

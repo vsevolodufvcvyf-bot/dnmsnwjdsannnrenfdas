@@ -216,6 +216,16 @@ def init_db():
         """)
         _ensure_column(c, "sale_clock", "weekday", "INTEGER")
         c.execute("""
+            CREATE TABLE IF NOT EXISTS buyer_seen (
+                order_id TEXT PRIMARY KEY,
+                buyer TEXT NOT NULL,
+                price REAL,
+                currency TEXT,
+                description TEXT,
+                created_at REAL NOT NULL
+            )
+        """)
+        c.execute("""
             CREATE TABLE IF NOT EXISTS autoback_pending (
                 order_id TEXT PRIMARY KEY,
                 chat_id TEXT,

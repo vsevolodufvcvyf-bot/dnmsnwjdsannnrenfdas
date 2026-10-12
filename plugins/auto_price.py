@@ -14,6 +14,7 @@ from telebot.types import InlineKeyboardMarkup as K, InlineKeyboardButton as B, 
 from shop_core.bus import freeze, is_frozen, notify
 from shop_core.db import get_db
 from shop_core.panels import candidates_from_suppliers, min_sale_for_cost, quote_block
+from shop_core.pricing import coef_from, seller_price_for  # noqa: F401  (используются и в тестах)
 from shop_core.plugin_settings import SettingsPage
 from shop_core.settings import ini_bool, is_dry_run, is_panic, load_ini, min_margin_mult, set_ini
 
@@ -170,22 +171,6 @@ def _floor(lot) -> tuple[float, str]:
         floor = max(floor, explicit)
         notes.append(f"минимум из [MinPrice] = {explicit:.2f}")
     return max(0.01, floor), "; ".join(notes)
-
-
-def coef_from(calc) -> float | None:
-    """Коэффициент «цена покупателя / цена в форме лота». Вне 1.0–3.0 — считаем неизвестным."""
-    if calc is None:
-        return None
-    try:
-        coef = float(calc.commission_coefficient)
-    except Exception:
-        return None
-    return coef if 1.0 <= coef <= 3.0 else None
-
-
-def seller_price_for(buyer_price: float, coef: float) -> float:
-    """В форме лота цена без комиссии; на витрине покупатель видит её × коэффициент."""
-    return round(float(buyer_price) / float(coef), 2)
 
 
 def is_pinned(public_lots, lot_id) -> bool:

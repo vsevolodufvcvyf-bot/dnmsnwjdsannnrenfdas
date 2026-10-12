@@ -24,6 +24,7 @@ from shop_core.team import (
 )
 from tg_bot.panel_ui import all_reply_labels
 
+WAIT_TTL = 600
 logger = logging.getLogger("FPC.ShopDesk")
 
 NAME = "Пульт магазина"
@@ -42,6 +43,18 @@ _LAST_DAY = ""
 
 def clear_wait(uid: int) -> None:
     _WIZ.pop(int(uid), None)
+
+
+def forget_secret(bot, message, field: str) -> bool:
+    """Ключ API не должен оставаться в истории чата. Карту и телефон кошелёк удаляет так же."""
+    if field != "key" or message is None:
+        return False
+    try:
+        bot.delete_message(message.chat.id, message.id)
+        return True
+    except Exception:
+        logger.debug("TRACEBACK", exc_info=True)
+        return False
 
 
 def _owner_id() -> int:
@@ -166,7 +179,7 @@ def day_text(cardinal) -> str:
     with get_db() as conn:
         row = conn.execute(
             """SELECT COALESCE(SUM(sale_price),0), COALESCE(SUM(cost),0), COALESCE(SUM(profit),0), COUNT(*)
-               FROM finance_log WHERE created_at > ?""",
+               FROM finance_log WHERE created_at > ? AND dry_run = 0""",
             (since,),
         ).fetchone()
         sales, cost, profit, n = row
@@ -185,12 +198,25 @@ def day_text(cardinal) -> str:
                 stock_lines.append(f"• {r['lot']}: {cnt} шт.")
     except Exception:
         logger.debug("TRACEBACK", exc_info=True)
+    from shop_core.goals import goal_line, today_totals
+    day_sales, _day_cost, day_profit, day_n = today_totals()
+    try:
+        from plugins.raise_clock import plan
+        _hours, why = plan()
+        hours_line = "🕐 " + html.escape(why)
+    except Exception:
+        logger.debug("TRACEBACK", exc_info=True)
+        hours_line = ""
     lines = [
-        "☀️ <b>Отчёт за сутки</b>",
+        "☀️ <b>Отчёт</b>",
         health_text(cardinal),
         "",
-        f"📒 Журнал: сделок <b>{n}</b> · оборот <code>{sales:.2f}</code> · закупка <code>{cost:.2f}</code> · чистыми <code>{profit:.2f}</code>",
+        f"📒 Сегодня: сделок <b>{day_n}</b> · оборот <code>{day_sales:.0f}</code> · чистыми <code>{day_profit:.0f}</code>",
+        goal_line(day_profit),
+        f"📒 За 24 часа: сделок <b>{n}</b> · оборот <code>{sales:.0f}</code> · закупка <code>{cost:.0f}</code> · чистыми <code>{profit:.0f}</code>",
     ]
+    if hours_line:
+        lines.append(hours_line + "  ·  подробнее /hours")
     if stock_lines:
         lines.append(f"\n📦 Мало на складе ({empty_stock}):")
         lines.extend(stock_lines[:12])
@@ -404,7 +430,9 @@ def init_settings(cardinal):
     cardinal.add_telegram_commands(UUID, [
         ("panels", "панели поставщиков", True),
         ("health", "здоровье FunPay", True),
-        ("day", "отчёт за сутки", True),
+        ("day", "отчёт за сегодня", True),
+        ("goal", "цель по прибыли на день", True),
+        ("hours", "часы, когда покупают", True),
         ("op", "добавить оператора @username", True),
     ])
 
@@ -443,6 +471,30 @@ def init_pre(cardinal):
         if not guard(m):
             return
         bot.send_message(m.chat.id, day_text(cardinal), parse_mode="HTML")
+
+    @bot.message_handler(commands=["goal"])
+    def cmd_goal(m: Message):
+        if not guard(m):
+            return
+        from shop_core.goals import goal_help, parse_goal, set_daily_target
+        kind, value = parse_goal(m.text or "")
+        if kind == "bad":
+            bot.send_message(
+                m.chat.id,
+                "Нужна сумма в рублях, например <code>/goal 3000</code>. Убрать цель: <code>/goal 0</code>.",
+                parse_mode="HTML",
+            )
+            return
+        if kind == "set" and value is not None:
+            set_daily_target(value)
+        bot.send_message(m.chat.id, goal_help(), parse_mode="HTML")
+
+    @bot.message_handler(commands=["hours"])
+    def cmd_hours(m: Message):
+        if not guard(m):
+            return
+        from plugins.raise_clock import demand_text
+        bot.send_message(m.chat.id, demand_text(), parse_mode="HTML")
 
     @bot.message_handler(commands=["team", "операторы"])
     def cmd_team(m: Message):
@@ -492,6 +544,9 @@ def init_pre(cardinal):
     def _is_wiz_text(m: Message) -> bool:
         if not m.from_user or m.from_user.id not in _WIZ:
             return False
+        if time.time() - float((_WIZ.get(m.from_user.id) or {}).get("at", 0)) > WAIT_TTL:
+            _WIZ.pop(m.from_user.id, None)
+            return False
         text = (m.text or "").strip()
         if not text or text.startswith("/"):
             return False
@@ -533,7 +588,7 @@ def init_pre(cardinal):
             new_name = "".join(ch if ch.isalnum() or ch == "_" else "_" for ch in raw)[:32] or "panel"
             kind = st.get("kind") or "other"
             apply_preset(new_name, kind)
-            _WIZ[m.from_user.id] = {"section": new_name, "field": "url"}
+            _WIZ[m.from_user.id] = {"at": time.time(), "section": new_name, "field": "url"}
             bot.send_message(m.chat.id, f"Панель <b>{html.escape(new_name)}</b>. Теперь пришли URL API.", parse_mode="HTML")
             return
         key = mapping.get(field)
@@ -558,10 +613,18 @@ def init_pre(cardinal):
             except ValueError:
                 bot.send_message(m.chat.id, "Себестоимость — число, например <code>12.5</code>", parse_mode="HTML")
                 return
+        if field == "key":
+            forget_secret(bot, m, field)
+            if len(raw) < 8:
+                bot.send_message(
+                    m.chat.id,
+                    "Ключ короткий — не записал. Пришли его ещё раз одним сообщением.",
+                )
+                return
         save_supplier_section(section, {key: raw})
         nxt = {"url": "key", "key": "sid", "sid": "cost", "cost": "kw", "kw": None}.get(field)
         if nxt:
-            _WIZ[m.from_user.id] = {"section": section, "field": nxt}
+            _WIZ[m.from_user.id] = {"at": time.time(), "section": section, "field": nxt}
             prompts = {
                 "key": (
                     "🔑 <b>Ключ API</b>\n"
@@ -641,12 +704,12 @@ def init_pre(cardinal):
                 logger.debug("TRACEBACK", exc_info=True)
             kind = parts[2] if parts[2] in PRESETS else "other"
             if kind == "other":
-                _WIZ[c.from_user.id] = {"section": "", "field": "name", "kind": "other"}
+                _WIZ[c.from_user.id] = {"at": time.time(), "section": "", "field": "name", "kind": "other"}
                 bot.send_message(c.message.chat.id, "Имя панели латиницей, например <code>my_panel</code>.", parse_mode="HTML")
                 return
             section = next_section_name(kind)
             apply_preset(section, kind)
-            _WIZ[c.from_user.id] = {"section": section, "field": "url"}
+            _WIZ[c.from_user.id] = {"at": time.time(), "section": section, "field": "url"}
             bot.send_message(
                 c.message.chat.id,
                 f"Панель <b>{html.escape(section)}</b>.\n"
@@ -678,7 +741,7 @@ def init_pre(cardinal):
             except Exception:
                 logger.debug("TRACEBACK", exc_info=True)
             section, field = parts[2], parts[3]
-            _WIZ[c.from_user.id] = {"section": section, "field": field}
+            _WIZ[c.from_user.id] = {"at": time.time(), "section": section, "field": field}
             prompts = {
                 "key": "🔑 Ключ API из кабинета панели, одним сообщением. В лог не пишу.",
                 "url": "URL API, обычно <code>https://домен/api/v2</code>.",

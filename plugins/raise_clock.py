@@ -2,6 +2,7 @@
 """Поднимает лоты в часы, когда их реально покупают, а не круглосуточно."""
 from __future__ import annotations
 
+import html
 import logging
 import time
 from datetime import datetime, timedelta
@@ -152,6 +153,35 @@ def status_line() -> str:
     return "Поднятие лотов: " + why
 
 
+def chart_lines(counts: dict[int, int], active: set[int] | None = None, width: int = 10) -> list[str]:
+    peak = max((int(n) for n in counts.values()), default=0)
+    lines = []
+    for hour in range(24):
+        n = int(counts.get(hour, 0))
+        filled = int(round(width * n / peak)) if peak and n else 0
+        mark = "●" if active and hour in active else "·"
+        lines.append(f"{mark}{hour:02d} {'█' * filled}{'░' * (width - filled)} {n}")
+    return lines
+
+
+def demand_text() -> str:
+    counts = _counts()
+    hours, why = plan()
+    lines = ["🕐 <b>Когда покупают</b>", html.escape(why), ""]
+    total = sum(int(n) for n in counts.values())
+    if not total:
+        lines.append("Заказов за 30 дней ещё нет. Пока лоты поднимаются с 11:00 до 23:59, не ночью.")
+        return "\n".join(lines)
+    chart = "\n".join(chart_lines(counts, hours))
+    lines.append("<pre>" + html.escape(chart) + "</pre>")
+    top = sorted(((h, int(n)) for h, n in counts.items() if n), key=lambda item: item[1], reverse=True)[:3]
+    if top:
+        tops = ", ".join(f"{h:02d}:00 — {n}" for h, n in top)
+        lines.append("Чаще всего: " + html.escape(tops))
+    lines.append("Точка слева — час, когда лоты поднимаются. Ночью подъёма нет, если ночью не покупают.")
+    return "\n".join(lines)
+
+
 def seed_history(cardinal) -> None:
     """Один раз, если часов ещё нет: первая страница закрытых продаж, не больше 50."""
     try:
@@ -191,6 +221,15 @@ def on_order(cardinal, event):
             when = getattr(order, "date", None)
             ts = when.timestamp() if hasattr(when, "timestamp") else None
             note_order(str(oid), ts)
+            from shop_core.dossier import note_seen
+            note_seen(
+                str(oid),
+                getattr(order, "buyer_username", "") or "",
+                getattr(order, "price", 0) or 0,
+                getattr(order, "description", "") or "",
+                ts,
+                getattr(order, "currency", "") or "",
+            )
     except Exception as ex:
         logger.debug("[RaiseClock] order: %s", ex)
 
