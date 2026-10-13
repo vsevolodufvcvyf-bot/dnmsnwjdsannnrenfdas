@@ -350,7 +350,9 @@ def ask_target(cardinal, chat_id, kind: str, chat_name: str | None = None) -> No
     elif kind == "smm":
         text = "Напиши ссылку на цель (канал, пост или @username) — без неё накрутку не запускаем."
     elif kind == "steam":
-        text = "Напиши логин Steam, который нужно пополнить."
+        text = "Напиши логин Steam, который нужно пополнить. Одним словом, без пароля."
+    elif kind == "robux":
+        text = "Напиши ник Roblox, на который покупать Game Pass. Одним словом, без пароля и без ссылки на чужой аккаунт."
     elif kind == "digital":
         text = "Напиши ссылку, логин или @username для выдачи — без этого закупку не запускаем."
     else:
@@ -372,6 +374,8 @@ def ask_confirm(cardinal, chat_id, kind: str, payload: str, chat_name: str | Non
         text = f"{what} пойдёт на {payload}. Верно? Напиши да или нет."
     elif kind == "steam":
         text = f"Пополняю Steam-логин «{payload}». Верно? Напиши да или нет."
+    elif kind == "robux":
+        text = f"Game Pass / робуксы пойдут на ник «{payload}». Верно? Напиши да или нет."
     elif kind == "digital":
         text = f"Выдача пойдёт на {payload}. Верно? Напиши да или нет."
     else:
@@ -490,7 +494,7 @@ def deliver_via_panel(cardinal, kind: str, order_id: str, chat_id, payload: str,
     """
     plugin = {
         "stars": "autostars", "gift": "autogift", "smm": "autosmm",
-        "steam": "steam_wallet", "digital": "digital",
+        "steam": "steam_wallet", "robux": "robux", "digital": "digital",
     }.get(kind, kind)
     cands, cand_notes = _candidates_for(kind, query, section, service_id)
     fitting, why = budget_panels(cands, sale, qty) if cands else ([], "Нет панели с ключом.")
@@ -674,14 +678,17 @@ def _explicit_correction(kind: str, text: str) -> str | None:
     if kind == "steam":
         named = re.search(r"(?:логин|login)\s*[:=]?\s*(\S+)", raw, re.I)
         return named.group(1).strip(".,)") if named else None
+    if kind == "robux":
+        named = re.search(r"(?:ник|roblox)\s*[:=]?\s*(\S+)", raw, re.I)
+        return named.group(1).strip(".,)@") if named else None
     return parse_link(raw)
 
 
 def _parse_target(kind: str, text: str):
     if kind in ("stars", "gift"):
         return parse_username_reply(text)
-    if kind == "steam":
-        tok = (text or "").strip().split()
+    if kind in ("steam", "robux"):
+        tok = (text or "").strip().lstrip("@").split()
         return tok[0] if tok else None
     if kind in ("digital", "smm"):
         return parse_link(text) or parse_username(text)
@@ -765,7 +772,10 @@ def handle_pending_message(cardinal, event, kinds: set[str]) -> bool:
         if is_yes(text):
             payload = pending["payload"]
         else:
-            bot_send(cardinal, chat_id, "Напиши да или нет. Если ник другой — пришли его с @.", name)
+            if kind in ("steam", "robux"):
+                bot_send(cardinal, chat_id, "Напиши да или нет. Если данные другие — пришли их одним словом, без пароля.", name)
+            else:
+                bot_send(cardinal, chat_id, "Напиши да или нет. Если ник другой — пришли его с @.", name)
             return True
         query = extra.get("query") or kind
         result = deliver_via_panel(
@@ -813,7 +823,7 @@ def handle_pending_message(cardinal, event, kinds: set[str]) -> bool:
 
 _PLUGIN_BY_KIND = {
     "stars": "autostars", "gift": "autogift", "smm": "autosmm",
-    "steam": "steam_wallet", "digital": "digital",
+    "steam": "steam_wallet", "robux": "robux", "digital": "digital",
 }
 _TG_READY = False
 

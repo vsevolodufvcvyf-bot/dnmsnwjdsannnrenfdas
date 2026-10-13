@@ -6,6 +6,7 @@ import configparser
 import html
 import logging
 import os
+import time
 from dataclasses import dataclass
 
 from telebot.types import InlineKeyboardMarkup as K, InlineKeyboardButton as B, CallbackQuery, Message
@@ -28,6 +29,8 @@ BIND_TO_DELETE = []
 BIND_TO_COMMANDS = {}
 CFG = os.path.join("configs", "methods.cfg")
 _READY = False
+_WAIT: dict[int, dict] = {}
+WAIT_TTL = 600
 
 
 @dataclass
@@ -42,8 +45,8 @@ class Method:
     reason: str = ""
 
 
-def clear_wait(_uid: int) -> None:
-    return
+def clear_wait(uid: int) -> None:
+    _WAIT.pop(int(uid), None)
 
 
 def _ok(cardinal, uid: int) -> bool:
@@ -294,6 +297,8 @@ def render_kind(kind: str) -> tuple[str, K]:
             lines.append(f"   ⚠️ {html.escape(m.reason)}")
         if not m.blocked:
             kb.add(B(f"{'★ ' if m.key == star else ''}{m.title}"[:64], callback_data=f"METH:set:{kind}:{m.key}"))
+            if (kind, m.key) in (("steam", "panel"), ("steam", "file"), ("robux", "gamepass"), ("robux", "file")):
+                kb.add(B("▶ Шаги: куда заходить", callback_data=f"METH:go:{kind}:{m.key}"))
     kb.row(B("🔌 Панель", callback_data="SHOP:wiz"), B("◀️ К схемам", callback_data="METH:hub"))
     return "\n\n".join(lines), kb
 
@@ -331,13 +336,14 @@ def init_settings(cardinal):
 
 
 def init_pre(cardinal):
-    global _READY
+    global _READY, _BOT
     init_settings(cardinal)
     tg = getattr(cardinal, "telegram", None)
     if not tg or not getattr(tg, "bot", None) or _READY:
         return
     _READY = True
     bot = tg.bot
+    _BOT = bot
 
     @bot.message_handler(commands=["methods", "схемы", "товары"])
     def cmd_m(m: Message):
@@ -371,9 +377,9 @@ def init_pre(cardinal):
             save_pref(kind, key)
             hint = ""
             if key in ("panel", "gamepass", "two") and not mth.ready:
-                hint = "\nДальше: «🔌 Панель» — вставь URL и ключ своей панели."
+                hint = "\nДальше нажми «▶ Шаги: куда заходить» — проведу по кабинету панели и цене."
             elif key == "file" and not mth.ready:
-                hint = "\nПоложи ключи в storage/products и привяжи лот в Автовыдаче."
+                hint = "\nНажми «▶ Шаги: куда заходить» — покажу, куда положить файл. Автовыдачу сам не включу."
             bot.send_message(
                 c.message.chat.id,
                 f"✅ Выбрано: <b>{html.escape(mth.title)}</b>"
@@ -383,6 +389,96 @@ def init_pre(cardinal):
             )
             text, kb = render_kind(kind)
             bot.send_message(c.message.chat.id, text, reply_markup=kb, parse_mode="HTML")
+            return
+        if parts[1] == "go" and len(parts) > 3:
+            _open_guide(c.message.chat.id, c.from_user.id, parts[2], parts[3])
+            return
+        if parts[1] == "w" and len(parts) > 2:
+            _guide_action(c.message.chat.id, c.from_user.id, parts[2])
+
+    def _is_guide_text(m: Message) -> bool:
+        if not m.from_user or m.from_user.id not in _WAIT:
+            return False
+        if time.time() - float((_WAIT.get(m.from_user.id) or {}).get("at", 0)) > WAIT_TTL:
+            _WAIT.pop(m.from_user.id, None)
+            return False
+        text = (m.text or "").strip()
+        if not text or text.startswith("/"):
+            return False
+        try:
+            from tg_bot.panel_ui import all_reply_labels
+            if text in all_reply_labels():
+                return False
+        except Exception:
+            logger.debug("TRACEBACK", exc_info=True)
+        return True
+
+    @bot.message_handler(func=_is_guide_text)
+    def cmd_guide_text(m: Message):
+        if not _ok(cardinal, m.from_user.id):
+            return
+        from shop_core.setup_guide import apply_text, buttons, load
+        ok, text, wipe = apply_text(m.from_user.id, m.text or "")
+        if wipe:
+            try:
+                bot.delete_message(m.chat.id, m.id)
+            except Exception:
+                logger.debug("TRACEBACK", exc_info=True)
+        run = load(m.from_user.id)
+        _arm_wait(m.from_user.id, run)
+        bot.send_message(
+            m.chat.id, text,
+            reply_markup=_guide_kb(buttons(run)) if run else None,
+            parse_mode="HTML",
+        )
+
+
+def _guide_kb(pairs: list[tuple[str, str]]) -> K:
+    kb = K()
+    for label, action in pairs:
+        kb.add(B(label[:64], callback_data=f"METH:w:{action}"[:64]))
+    return kb
+
+
+def _arm_wait(uid: int, run: dict | None) -> None:
+    from shop_core.setup_guide import expects_text
+    if expects_text(run):
+        _WAIT[int(uid)] = {"at": time.time()}
+    else:
+        _WAIT.pop(int(uid), None)
+
+
+_BOT = None
+
+
+def _open_guide(chat_id: int, uid: int, kind: str, method: str) -> None:
+    from shop_core.setup_guide import begin, buttons, screen
+    try:
+        from tg_bot.panel_ui import clear_all_waits
+        clear_all_waits(uid)
+    except Exception:
+        logger.debug("TRACEBACK", exc_info=True)
+    try:
+        run = begin(uid, kind, method)
+    except ValueError:
+        _bot_for(chat_id, "Этот вариант мастер не ведёт.", None)
+        return
+    _arm_wait(uid, run)
+    _bot_for(chat_id, screen(run), _guide_kb(buttons(run)))
+
+
+def _bot_for(chat_id: int, text: str, kb) -> None:
+    if _BOT is not None:
+        _BOT.send_message(chat_id, text, reply_markup=kb, parse_mode="HTML")
+
+
+def _guide_action(chat_id: int, uid: int, action: str) -> None:
+    from shop_core.setup_guide import apply_action, buttons, load
+    _ok_step, text = apply_action(uid, action)
+    run = load(uid)
+    _arm_wait(uid, run)
+    pairs = [] if action == "stop" else buttons(run)
+    _bot_for(chat_id, text, _guide_kb(pairs) if pairs else None)
 
 
 BIND_TO_PRE_INIT = [init_pre]
