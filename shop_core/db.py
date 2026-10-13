@@ -226,6 +226,18 @@ def init_db():
             )
         """)
         c.execute("""
+            CREATE TABLE IF NOT EXISTS needs_human (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER,
+                order_id TEXT,
+                reason TEXT NOT NULL,
+                detail TEXT,
+                status TEXT DEFAULT 'open',
+                created_at REAL,
+                resolved_at REAL
+            )
+        """)
+        c.execute("""
             CREATE TABLE IF NOT EXISTS autoback_pending (
                 order_id TEXT PRIMARY KEY,
                 chat_id TEXT,

@@ -498,6 +498,8 @@ def deliver_via_panel(cardinal, kind: str, order_id: str, chat_id, payload: str,
         why = "\n".join([why, *cand_notes]).strip()
     if not fitting:
         return "hold"
+    from shop_core.breaker import counts_as_outage, note_failure, note_success, prefer_healthy
+    fitting = prefer_healthy(fitting)
     best = fitting[0]
     if not claim_delivery(str(order_id), plugin):
         bot_send(cardinal, chat_id, "Этот заказ уже закупается, подожди немного.", chat_name)
@@ -543,33 +545,42 @@ def deliver_via_panel(cardinal, kind: str, order_id: str, chat_id, payload: str,
         try:
             res = supplier_post(requests.post, panel["api_url"], payload_req, timeout=15.0)
         except Exception as ex:
-            logger.warning("[%s] panel add: %s", plugin, ex)
+            logger.warning("[%s] panel add: %s", plugin, type(ex).__name__)
+            if counts_as_outage(None, ex):
+                note_failure(panel.get("api_url"))
             if request_not_sent(ex):
                 last_error = str(ex)[:240]
                 if idx + 1 < len(fitting):
                     notify(cardinal, f"↪️ {plugin} #{order_id}: «{panel_name}» недоступна, пробую следующую панель.", True)
                     continue
                 break
-            return _mark_uncertain(cardinal, kind, plugin, order_id, chat_id, chat_name, payload, qty,
-                                   panel_name, f"нет ответа: {str(ex)[:200]}")
+            return _queue_supplier(
+                cardinal, chat_id, order_id,
+                _mark_uncertain(cardinal, kind, plugin, order_id, chat_id, chat_name, payload, qty,
+                                panel_name, f"нет ответа: {type(ex).__name__}"),
+                f"нет ответа: {type(ex).__name__}",
+            )
         try:
             data = res.json()
         except Exception:
             data = {}
         code = int(getattr(res, "status_code", 0) or 0)
+        if counts_as_outage(code, None):
+            note_failure(panel.get("api_url"))
         verdict = classify_panel_response(code, data)
         if verdict == "ok":
+            note_success(panel.get("api_url"))
             task = str(data.get("order"))
-            with get_db() as conn:
-                conn.execute(
-                    """INSERT OR REPLACE INTO supplier_orders
-                       (order_id, plugin_name, provider, task_id, status, created_at)
-                       VALUES (?, ?, ?, ?, 'success', ?)""",
-                    (str(order_id), plugin, panel.get("section"), task, time.time()),
-                )
+            from shop_core.task_status import remember_task, status_keyboard
+            rid = remember_task(str(order_id), plugin, str(panel.get("section") or ""), task, "success")
             log_finance(order_id, plugin, sale, float(panel.get("_cost") or cost))
             bot_send(cardinal, chat_id, f"Готово, заказ у поставщика. Номер задачи: #{task}", chat_name)
-            notify(cardinal, f"✅ {plugin} #{order_id} → <code>{payload}</code> qty={qty} task #{task}", False)
+            notify(
+                cardinal,
+                f"✅ {plugin} #{order_id} → <code>{payload}</code> qty={qty} task #{task}",
+                False,
+                keyboard=status_keyboard(rid),
+            )
             return "ok"
         if verdict == "no_funds":
             last_error = f"нет баланса на «{panel_name}»: {str(data)[:200]}"
@@ -579,14 +590,32 @@ def deliver_via_panel(cardinal, kind: str, order_id: str, chat_id, payload: str,
                 continue
             break
         if verdict == "uncertain":
-            return _mark_uncertain(cardinal, kind, plugin, order_id, chat_id, chat_name, payload, qty,
-                                   panel_name, f"HTTP {code}, ответ: {str(data)[:200]}")
-        last_error = f"«{panel_name}» отклонила: {str(data)[:220]}"
+            return _queue_supplier(
+                cardinal, chat_id, order_id,
+                _mark_uncertain(cardinal, kind, plugin, order_id, chat_id, chat_name, payload, qty,
+                                panel_name, f"HTTP {code}"),
+                f"HTTP {code}",
+            )
+        safe = ""
+        if isinstance(data, dict):
+            safe = str(data.get("error") or data.get("message") or "")[:160]
+        last_error = f"«{panel_name}» отклонила: {safe}" if safe else f"«{panel_name}» отклонила заказ"
         break
     release_delivery(str(order_id), plugin)
+    _queue_supplier(cardinal, chat_id, order_id, "fail", last_error)
     notify(cardinal, f"❌ {plugin} #{order_id}: {last_error}", True)
     bot_send(cardinal, chat_id, "Поставщик не принял заказ. Проверь данные и напиши да ещё раз или подожди продавца.", chat_name)
     return "fail"
+
+
+def _queue_supplier(cardinal, chat_id, order_id, result: str, detail: str) -> str:
+    try:
+        from shop_core.operator_queue import enqueue
+        aid = getattr(getattr(cardinal, "account", None), "id", None)
+        enqueue(chat_id, order_id, "supplier", detail, account_id=aid)
+    except Exception:
+        logger.debug("TRACEBACK", exc_info=True)
+    return result
 
 
 def _mark_uncertain(cardinal, kind: str, plugin: str, order_id, chat_id, chat_name, payload, qty,

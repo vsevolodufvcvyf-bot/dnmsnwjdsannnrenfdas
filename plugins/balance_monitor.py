@@ -344,6 +344,49 @@ def note_hold(held: float, now: float | None = None) -> list[list[float]]:
     return hist
 
 
+def candidate_order_ids(cardinal, now: float | None = None) -> list[str] | None:
+    """Оплаченные заказы старше 48 ч.
+
+    None — список с FunPay не прочитался, тогда берём журнал закупок.
+    Пустой список — прочитали, таких заказов нет.
+    """
+    now = time.time() if now is None else float(now)
+    acc = getattr(cardinal, "account", None)
+    if acc is not None and not is_frozen():
+        try:
+            from plugins.seller_tools import fetch_paid_orders, find_stuck
+            stuck = find_stuck(fetch_paid_orders(acc, pages=2), 48, now)
+            return [str(o.id).lstrip("#") for o in stuck if getattr(o, "id", None)][:12]
+        except Exception as ex:
+            logger.debug("[Wallet] open orders: %s", ex)
+    since = now - 7 * 86400
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT order_id FROM supplier_orders
+               WHERE plugin_name != 'restock' AND created_at >= ?
+               ORDER BY created_at DESC LIMIT 12""",
+            (since,),
+        ).fetchall()
+    found = [str(r["order_id"]).lstrip("#") for r in rows if r["order_id"]]
+    return found or None
+
+
+def hold_alert_text(stuck_amount: float, held: float, order_ids: list[str] | None) -> str:
+    lines = [
+        f"⏳ Удержание не уменьшается 48 ч: <code>{stuck_amount:.2f}</code> ₽ (сейчас <code>{held:.2f}</code>).",
+        "Проверь незакрытые заказы — покупатели не подтверждают или идёт спор.",
+    ]
+    if order_ids:
+        links = ", ".join(
+            f"<a href=\"https://funpay.com/orders/{html.escape(oid)}/\">#{html.escape(oid)}</a>"
+            for oid in order_ids[:12]
+        )
+        lines.append("Возможные заказы: " + links)
+    else:
+        lines.append("Список оплаченных заказов сейчас не прочитался. Открой /stuck.")
+    return "\n".join(lines)
+
+
 def hold_stuck(hist: list[list[float]], now: float) -> float:
     """Сумма, которая лежит в удержании все 48 ч и ни разу не уменьшилась. 0 — всё движется."""
     window = [h for h in hist if now - float(h[0]) <= HOLD_WINDOW + 3600]
@@ -373,12 +416,7 @@ def _hold_loop(cardinal) -> None:
             last = float(get_flag(HOLD_ALERT_KEY, "0") or 0)
             if stuck and now - last > 86400:
                 set_flag(HOLD_ALERT_KEY, str(now))
-                notify(
-                    cardinal,
-                    f"⏳ Удержание не уменьшается 48 ч: <code>{stuck:.2f}</code> ₽ (сейчас <code>{held:.2f}</code>).\n"
-                    f"Проверь незакрытые заказы — покупатели не подтверждают или идёт спор.",
-                    True,
-                )
+                notify(cardinal, hold_alert_text(stuck, held, candidate_order_ids(cardinal, now)), False)
         except Exception as ex:
             logger.debug("[Wallet] hold: %s", ex)
 
