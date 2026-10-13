@@ -88,34 +88,78 @@ def seconds_until(hours: set[int], now: datetime | None = None) -> int:
 
 
 def _counts(weekday: int | None = None) -> dict[int, int]:
+    days = None if weekday is None else {int(weekday)}
+    return _counts_days(days)
+
+
+def _counts_days(days: set[int] | None) -> dict[int, int]:
     since = time.time() - LOOKBACK_SEC
     sql = "SELECT hour, COUNT(*) AS n FROM sale_clock WHERE created_at >= ?"
-    args: tuple = (since,)
-    if weekday is not None:
-        sql += f" AND {_WEEKDAY_SQL} = ?"
-        args = (since, int(weekday))
+    args: list = [since]
+    if days:
+        marks = ",".join("?" * len(days))
+        sql += f" AND {_WEEKDAY_SQL} IN ({marks})"
+        args.extend(sorted(int(d) for d in days))
     with get_db() as conn:
-        rows = conn.execute(sql + " GROUP BY hour", args).fetchall()
+        rows = conn.execute(sql + " GROUP BY hour", tuple(args)).fetchall()
     return {int(r["hour"]): int(r["n"]) for r in rows}
 
 
-def plan(now: datetime | None = None) -> tuple[set[int], str]:
+def day_bucket(weekday: int) -> tuple[str, set[int]]:
+    if int(weekday) >= 5:
+        return "выходные", {5, 6}
+    return "будни", set(range(5))
+
+
+def plan_detail(now: datetime | None = None) -> tuple[set[int], str, dict[int, int]]:
+    """Окно часов и счётчики, по которым оно посчитано: этот день, иначе будни/выходные, иначе все."""
     if not _enabled():
-        return set(range(24)), "часы выключены — поднимаю когда FunPay разрешит"
-    day = (now or datetime.now()).weekday()
+        return set(range(24)), "часы выключены — поднимаю когда FunPay разрешит", {}
+    moment = now or datetime.now()
+    day = moment.weekday()
     by_day = _counts(day)
     if sum(by_day.values()) >= MIN_DAY_ORDERS:
         hours, why = hours_from_counts(by_day, MIN_DAY_ORDERS)
-        return hours, f"{DAYS[day]}: {why}"
-    return hours_from_counts(_counts())
+        return hours, f"{DAYS[day]}: {why}", by_day
+    label, days = day_bucket(day)
+    by_bucket = _counts_days(days)
+    if sum(by_bucket.values()) >= MIN_DAY_ORDERS:
+        hours, why = hours_from_counts(by_bucket, MIN_DAY_ORDERS)
+        return hours, f"{label}: {why}", by_bucket
+    overall = _counts()
+    hours, why = hours_from_counts(overall)
+    return hours, why, overall
+
+
+def plan(now: datetime | None = None) -> tuple[set[int], str]:
+    hours, why, _counts_used = plan_detail(now)
+    return hours, why
+
+
+def preferred_gap(moment: datetime, hours: set[int], counts: dict[int, int]) -> int:
+    """Дополнительная пауза между поднятиями в тонкий час. Чаще, чем разрешает FunPay, не поднимаем."""
+    total = sum(int(n) for n in counts.values())
+    if total < MIN_DAY_ORDERS or not hours or moment.hour not in hours:
+        return 0
+    avg = total / float(len(hours))
+    here = int(counts.get(moment.hour, 0))
+    if here >= avg:
+        return 0
+    if here <= 0:
+        return 40 * 60
+    return 20 * 60
 
 
 def raise_decision(now: datetime | None = None) -> tuple[bool, str, int]:
-    """Можно поднимать сейчас, пояснение, сколько секунд спать если нельзя."""
-    hours, why = plan(now)
+    """Можно поднимать сейчас, пояснение и пауза.
+
+    Вне окна пауза — до следующего живого часа (не больше 10 минут за шаг).
+    Внутри окна пауза — запас к кулдауну FunPay, если в этот час заказов мало.
+    """
+    hours, why, counts = plan_detail(now)
     moment = now or datetime.now()
     if moment.hour in hours:
-        return True, why, 0
+        return True, why, preferred_gap(moment, hours, counts)
     return False, f"сейчас не час покупок ({why})", min(600, seconds_until(hours, moment))
 
 

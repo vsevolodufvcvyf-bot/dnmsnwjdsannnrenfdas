@@ -198,6 +198,15 @@ def _escalation_kb(chat_id) -> K:
     return kb
 
 
+def _note_sanitizer(cardinal, chat_id, reason: str) -> None:
+    try:
+        from shop_core.operator_queue import enqueue
+        aid = getattr(getattr(cardinal, "account", None), "id", None)
+        enqueue(chat_id, None, "sanitizer", reason or "фильтр ответа", account_id=aid)
+    except Exception:
+        logger.debug("TRACEBACK", exc_info=True)
+
+
 def escalate(cardinal, chat_id, chat_name, text, reason: str, holding_reply: str | None = None):
     """Отдаёт чат продавцу: ИИ в нём молчит, продавцу — уведомление с кнопкой."""
     set_chat_mute(chat_id, 900)
@@ -213,6 +222,13 @@ def escalate(cardinal, chat_id, chat_name, text, reason: str, holding_reply: str
         True,
         keyboard=_escalation_kb(chat_id),
     )
+    try:
+        from shop_core.operator_queue import enqueue
+        aid = getattr(getattr(cardinal, "account", None), "id", None)
+        code = "sanitizer" if "пообеща" in (reason or "").lower() else "human"
+        enqueue(chat_id, None, code, reason, account_id=aid)
+    except Exception:
+        logger.debug("TRACEBACK", exc_info=True)
 
 
 def process_message(cardinal, chat_id: int, chat_name: str, text: str):
@@ -274,6 +290,7 @@ def process_message(cardinal, chat_id: int, chat_name: str, text: str):
                 return
             if not is_clean(reply):
                 reason = sanitize_reason(reply)
+                _note_sanitizer(cardinal, chat_id, reason or "фильтр ответа")
                 if str(cfg.get("retry_on_sanitizer", "1")) in ("1", "true", "True"):
                     retry_msgs = msgs + [
                         {"role": "assistant", "content": reply},
@@ -289,6 +306,7 @@ def process_message(cardinal, chat_id: int, chat_name: str, text: str):
                 return
 
         if not is_clean(reply):
+            _note_sanitizer(cardinal, chat_id, sanitize_reason(reply) or "фильтр ответа")
             reply = "Уточню у продавца и отвечу здесь."
 
         _store_history(chat_id, "user", text)

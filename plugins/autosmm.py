@@ -100,12 +100,19 @@ def smm_panel_candidates(service_id) -> list[dict]:
 
 
 def _panel_add(url, key, service_id, link, quantity):
+    from shop_core.breaker import counts_as_outage, note_failure
     payload = {"key": key, "action": "add", "service": service_id, "link": link, "quantity": quantity}
     res = supplier_post(requests.post, url, payload, timeout=12.0)
+    code = int(getattr(res, "status_code", 0) or 0)
     data = res.json()
-    if "order" in data:
+    if counts_as_outage(code, None):
+        note_failure(url)
+    if isinstance(data, dict) and "order" in data:
         return str(data["order"]), data
-    raise RuntimeError(str(data))
+    safe = ""
+    if isinstance(data, dict):
+        safe = str(data.get("error") or data.get("message") or "")[:160]
+    raise RuntimeError(safe or "panel rejected")
 
 
 def _match_smm(event):
@@ -187,7 +194,11 @@ def _fulfill_smm_direct(cardinal, matched):
     for c in cands:
         if not c.get("service_id"):
             c["service_id"] = str(service_id)
-    best, why_m = pick_cheapest(cands, sale, quantity)
+    from shop_core.breaker import counts_as_outage, is_open, note_failure, note_success
+    healthy = [c for c in cands if not is_open(c.get("api_url"))]
+    best, why_m = pick_cheapest(healthy or cands, sale, quantity)
+    if not best and healthy:
+        best, why_m = pick_cheapest(cands, sale, quantity)
     if not best:
         release_delivery(order_id, "autosmm")
         notify(cardinal, f"📉 AutoSMM Price Guard #{order_id}: {why_m}", True)
@@ -209,11 +220,21 @@ def _fulfill_smm_direct(cardinal, matched):
     try:
         sid = int(best.get("service_id") or service_id)
         task_id, _ = _panel_add(best["api_url"], best["api_key"], sid, target_link, quantity)
+        note_success(best.get("api_url"))
     except Exception as e1:
         err = e1
+        if not isinstance(e1, RuntimeError) and counts_as_outage(None, e1):
+            note_failure(best.get("api_url"))
     if not task_id:
         release_delivery(order_id, "autosmm")
-        notify(cardinal, f"❌ AutoSMM #{order_id} не ушёл поставщику: {err}", True)
+        short = (str(err)[:160] if err else "ошибка")
+        try:
+            from shop_core.operator_queue import enqueue
+            enqueue(order.chat_id, order_id, "supplier", short,
+                    account_id=getattr(getattr(cardinal, "account", None), "id", None))
+        except Exception:
+            logger.debug("TRACEBACK", exc_info=True)
+        notify(cardinal, f"❌ AutoSMM #{order_id} не ушёл поставщику: {short}", True)
         return
 
     with get_db() as conn:
@@ -222,8 +243,11 @@ def _fulfill_smm_direct(cardinal, matched):
                VALUES (?, ?, ?, ?, 'success', ?)""",
             (order.id, service_id, target_link, task_id, time.time()),
         )
+    from shop_core.task_status import remember_task, status_keyboard
+    rid = remember_task(order_id, "autosmm", str(best.get("section") or best.get("name") or ""), task_id, "success")
     log_finance(order_id, "autosmm", sale, cost)
     bot_send(cardinal, order.chat_id, f"Заказ накрутки в работе. ID задачи: #{task_id}.")
+    notify(cardinal, f"✅ AutoSMM #{order_id} задача #{task_id}", False, keyboard=status_keyboard(rid))
     logger.info("[AutoSMM] #%s [%s] task %s", order_id, best.get("name"), task_id)
 
 

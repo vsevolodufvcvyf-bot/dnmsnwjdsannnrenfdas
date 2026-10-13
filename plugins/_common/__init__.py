@@ -7,7 +7,7 @@
 import importlib
 import sys
 
-for _name in ("bus", "confirm", "db", "finance", "hooks", "howto", "logging_redact", "panels",
+for _name in ("breaker", "bus", "confirm", "db", "finance", "hooks", "howto", "logging_redact", "operator_queue", "panels", "task_status",
               "plugin_settings", "rate_limit", "sanitizer", "settings", "team"):
     try:
         sys.modules[f"{__name__}.{_name}"] = importlib.import_module(f"shop_core.{_name}")

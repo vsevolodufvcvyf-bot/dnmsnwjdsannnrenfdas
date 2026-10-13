@@ -350,7 +350,9 @@ def ask_target(cardinal, chat_id, kind: str, chat_name: str | None = None) -> No
     elif kind == "smm":
         text = "Напиши ссылку на цель (канал, пост или @username) — без неё накрутку не запускаем."
     elif kind == "steam":
-        text = "Напиши логин Steam, который нужно пополнить."
+        text = "Напиши логин Steam, который нужно пополнить. Одним словом, без пароля."
+    elif kind == "robux":
+        text = "Напиши ник Roblox, на который покупать Game Pass. Одним словом, без пароля и без ссылки на чужой аккаунт."
     elif kind == "digital":
         text = "Напиши ссылку, логин или @username для выдачи — без этого закупку не запускаем."
     else:
@@ -372,6 +374,8 @@ def ask_confirm(cardinal, chat_id, kind: str, payload: str, chat_name: str | Non
         text = f"{what} пойдёт на {payload}. Верно? Напиши да или нет."
     elif kind == "steam":
         text = f"Пополняю Steam-логин «{payload}». Верно? Напиши да или нет."
+    elif kind == "robux":
+        text = f"Game Pass / робуксы пойдут на ник «{payload}». Верно? Напиши да или нет."
     elif kind == "digital":
         text = f"Выдача пойдёт на {payload}. Верно? Напиши да или нет."
     else:
@@ -490,7 +494,7 @@ def deliver_via_panel(cardinal, kind: str, order_id: str, chat_id, payload: str,
     """
     plugin = {
         "stars": "autostars", "gift": "autogift", "smm": "autosmm",
-        "steam": "steam_wallet", "digital": "digital",
+        "steam": "steam_wallet", "robux": "robux", "digital": "digital",
     }.get(kind, kind)
     cands, cand_notes = _candidates_for(kind, query, section, service_id)
     fitting, why = budget_panels(cands, sale, qty) if cands else ([], "Нет панели с ключом.")
@@ -498,6 +502,8 @@ def deliver_via_panel(cardinal, kind: str, order_id: str, chat_id, payload: str,
         why = "\n".join([why, *cand_notes]).strip()
     if not fitting:
         return "hold"
+    from shop_core.breaker import counts_as_outage, note_failure, note_success, prefer_healthy
+    fitting = prefer_healthy(fitting)
     best = fitting[0]
     if not claim_delivery(str(order_id), plugin):
         bot_send(cardinal, chat_id, "Этот заказ уже закупается, подожди немного.", chat_name)
@@ -543,33 +549,42 @@ def deliver_via_panel(cardinal, kind: str, order_id: str, chat_id, payload: str,
         try:
             res = supplier_post(requests.post, panel["api_url"], payload_req, timeout=15.0)
         except Exception as ex:
-            logger.warning("[%s] panel add: %s", plugin, ex)
+            logger.warning("[%s] panel add: %s", plugin, type(ex).__name__)
+            if counts_as_outage(None, ex):
+                note_failure(panel.get("api_url"))
             if request_not_sent(ex):
                 last_error = str(ex)[:240]
                 if idx + 1 < len(fitting):
                     notify(cardinal, f"↪️ {plugin} #{order_id}: «{panel_name}» недоступна, пробую следующую панель.", True)
                     continue
                 break
-            return _mark_uncertain(cardinal, kind, plugin, order_id, chat_id, chat_name, payload, qty,
-                                   panel_name, f"нет ответа: {str(ex)[:200]}")
+            return _queue_supplier(
+                cardinal, chat_id, order_id,
+                _mark_uncertain(cardinal, kind, plugin, order_id, chat_id, chat_name, payload, qty,
+                                panel_name, f"нет ответа: {type(ex).__name__}"),
+                f"нет ответа: {type(ex).__name__}",
+            )
         try:
             data = res.json()
         except Exception:
             data = {}
         code = int(getattr(res, "status_code", 0) or 0)
+        if counts_as_outage(code, None):
+            note_failure(panel.get("api_url"))
         verdict = classify_panel_response(code, data)
         if verdict == "ok":
+            note_success(panel.get("api_url"))
             task = str(data.get("order"))
-            with get_db() as conn:
-                conn.execute(
-                    """INSERT OR REPLACE INTO supplier_orders
-                       (order_id, plugin_name, provider, task_id, status, created_at)
-                       VALUES (?, ?, ?, ?, 'success', ?)""",
-                    (str(order_id), plugin, panel.get("section"), task, time.time()),
-                )
+            from shop_core.task_status import remember_task, status_keyboard
+            rid = remember_task(str(order_id), plugin, str(panel.get("section") or ""), task, "success")
             log_finance(order_id, plugin, sale, float(panel.get("_cost") or cost))
             bot_send(cardinal, chat_id, f"Готово, заказ у поставщика. Номер задачи: #{task}", chat_name)
-            notify(cardinal, f"✅ {plugin} #{order_id} → <code>{payload}</code> qty={qty} task #{task}", False)
+            notify(
+                cardinal,
+                f"✅ {plugin} #{order_id} → <code>{payload}</code> qty={qty} task #{task}",
+                False,
+                keyboard=status_keyboard(rid),
+            )
             return "ok"
         if verdict == "no_funds":
             last_error = f"нет баланса на «{panel_name}»: {str(data)[:200]}"
@@ -579,14 +594,32 @@ def deliver_via_panel(cardinal, kind: str, order_id: str, chat_id, payload: str,
                 continue
             break
         if verdict == "uncertain":
-            return _mark_uncertain(cardinal, kind, plugin, order_id, chat_id, chat_name, payload, qty,
-                                   panel_name, f"HTTP {code}, ответ: {str(data)[:200]}")
-        last_error = f"«{panel_name}» отклонила: {str(data)[:220]}"
+            return _queue_supplier(
+                cardinal, chat_id, order_id,
+                _mark_uncertain(cardinal, kind, plugin, order_id, chat_id, chat_name, payload, qty,
+                                panel_name, f"HTTP {code}"),
+                f"HTTP {code}",
+            )
+        safe = ""
+        if isinstance(data, dict):
+            safe = str(data.get("error") or data.get("message") or "")[:160]
+        last_error = f"«{panel_name}» отклонила: {safe}" if safe else f"«{panel_name}» отклонила заказ"
         break
     release_delivery(str(order_id), plugin)
+    _queue_supplier(cardinal, chat_id, order_id, "fail", last_error)
     notify(cardinal, f"❌ {plugin} #{order_id}: {last_error}", True)
     bot_send(cardinal, chat_id, "Поставщик не принял заказ. Проверь данные и напиши да ещё раз или подожди продавца.", chat_name)
     return "fail"
+
+
+def _queue_supplier(cardinal, chat_id, order_id, result: str, detail: str) -> str:
+    try:
+        from shop_core.operator_queue import enqueue
+        aid = getattr(getattr(cardinal, "account", None), "id", None)
+        enqueue(chat_id, order_id, "supplier", detail, account_id=aid)
+    except Exception:
+        logger.debug("TRACEBACK", exc_info=True)
+    return result
 
 
 def _mark_uncertain(cardinal, kind: str, plugin: str, order_id, chat_id, chat_name, payload, qty,
@@ -645,14 +678,17 @@ def _explicit_correction(kind: str, text: str) -> str | None:
     if kind == "steam":
         named = re.search(r"(?:логин|login)\s*[:=]?\s*(\S+)", raw, re.I)
         return named.group(1).strip(".,)") if named else None
+    if kind == "robux":
+        named = re.search(r"(?:ник|roblox)\s*[:=]?\s*(\S+)", raw, re.I)
+        return named.group(1).strip(".,)@") if named else None
     return parse_link(raw)
 
 
 def _parse_target(kind: str, text: str):
     if kind in ("stars", "gift"):
         return parse_username_reply(text)
-    if kind == "steam":
-        tok = (text or "").strip().split()
+    if kind in ("steam", "robux"):
+        tok = (text or "").strip().lstrip("@").split()
         return tok[0] if tok else None
     if kind in ("digital", "smm"):
         return parse_link(text) or parse_username(text)
@@ -736,7 +772,10 @@ def handle_pending_message(cardinal, event, kinds: set[str]) -> bool:
         if is_yes(text):
             payload = pending["payload"]
         else:
-            bot_send(cardinal, chat_id, "Напиши да или нет. Если ник другой — пришли его с @.", name)
+            if kind in ("steam", "robux"):
+                bot_send(cardinal, chat_id, "Напиши да или нет. Если данные другие — пришли их одним словом, без пароля.", name)
+            else:
+                bot_send(cardinal, chat_id, "Напиши да или нет. Если ник другой — пришли его с @.", name)
             return True
         query = extra.get("query") or kind
         result = deliver_via_panel(
@@ -784,7 +823,7 @@ def handle_pending_message(cardinal, event, kinds: set[str]) -> bool:
 
 _PLUGIN_BY_KIND = {
     "stars": "autostars", "gift": "autogift", "smm": "autosmm",
-    "steam": "steam_wallet", "digital": "digital",
+    "steam": "steam_wallet", "robux": "robux", "digital": "digital",
 }
 _TG_READY = False
 

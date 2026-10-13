@@ -755,6 +755,8 @@ class Cardinal(object):
                 next_time = self.raise_lots()
                 delay = int(next_time) - int(time.time())
                 left = 10 if delay <= 0 else delay
+                if wait_hour and int(wait_hour) > left:
+                    left = int(wait_hour)
                 while left > 0:
                     if not self.MAIN_CFG["FunPay"].getboolean("autoRaise"):
                         break
