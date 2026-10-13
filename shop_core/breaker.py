@@ -26,13 +26,19 @@ def panel_key(url: str) -> str:
     return (url or "").strip().rstrip("/").lower()
 
 
-def is_open(url: str, now: float | None = None) -> bool:
+def pause_left(url: str, now: float | None = None) -> int:
+    """Секунд до конца паузы. 0 — панель не на паузе."""
     now = time.time() if now is None else float(now)
     key = panel_key(url)
     if not key:
-        return False
+        return 0
     with _LOCK:
-        return float(_OPEN_UNTIL.get(key, 0) or 0) > now
+        left = int(float(_OPEN_UNTIL.get(key, 0) or 0) - now)
+    return left if left > 0 else 0
+
+
+def is_open(url: str, now: float | None = None) -> bool:
+    return pause_left(url, now) > 0
 
 
 def note_success(url: str) -> None:

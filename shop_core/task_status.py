@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import time
 
 from shop_core.db import get_db
 
@@ -25,14 +26,25 @@ def remember_task(order_id: str, plugin_name: str, provider: str, task_id: str,
         conn.execute(
             """INSERT OR REPLACE INTO supplier_orders
                (order_id, plugin_name, provider, task_id, status, created_at)
-               VALUES (?, ?, ?, ?, ?, strftime('%s','now'))""",
-            (str(order_id), plugin_name, provider or "", str(task_id), status),
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (str(order_id), plugin_name, provider or "", str(task_id), status, time.time()),
         )
         row = conn.execute(
             "SELECT rowid AS rid FROM supplier_orders WHERE order_id = ? AND plugin_name = ?",
             (str(order_id), plugin_name),
         ).fetchone()
     return int(row["rid"]) if row else 0
+
+
+def recent_task_count(hours: float = 24) -> int:
+    since = time.time() - float(hours) * 3600
+    with get_db() as conn:
+        row = conn.execute(
+            """SELECT COUNT(*) AS c FROM supplier_orders
+               WHERE plugin_name != 'restock' AND created_at >= ?""",
+            (since,),
+        ).fetchone()
+    return int(row["c"] or 0)
 
 
 def status_keyboard(rowid: int):

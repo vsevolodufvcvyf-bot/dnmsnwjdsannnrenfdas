@@ -144,6 +144,8 @@ def test_hold_alert_lists_order_ids_from_journal():
     text = hold_alert_text(120.5, 130.0, ids)
     assert "ZZ1" in text and "48 ч" in text and "lot-key" not in text
     assert "не прочитался" in hold_alert_text(1, 1, None)
+    assert "пусто" in hold_alert_text(1, 1, [])
+    assert "не прочитался" not in hold_alert_text(1, 1, [])
 
 
 def test_market_skips_own_lots_and_dumps():
@@ -165,6 +167,36 @@ def test_market_skips_own_lots_and_dumps():
     assert stats["cheapest"] == 100
     assert stats["n"] == 4
     assert stats["floor_bar"] > 1
+
+
+def test_home_shows_hold_queue_and_panel_pause():
+    from shop_core.breaker import note_failure
+    from shop_core.operator_queue import enqueue
+    from shop_core.panels import panels_overview, save_supplier_section
+    from tg_bot.panel_ui import BTN_QUEUE, BTN_TASKS, all_reply_labels, home_kb, home_text, reply_keyboard
+    save_supplier_section("stars", {"api_url": "https://panel.example/api", "api_key": "secret-key", "enabled": "1"})
+    for _ in range(3):
+        note_failure("https://panel.example/api")
+    enqueue(99, "A1", "human", "позови человека")
+    card = SimpleNamespace(
+        account=SimpleNamespace(username="shop", id=5, active_sales=0),
+        balance=SimpleNamespace(total_rub=100, available_rub=40, source="exact"),
+        profile=None,
+    )
+    text = home_text(card)
+    assert "удержано" in text and "60" in text
+    assert "очередь" in text and "stars" in text
+    assert "secret-key" not in text
+    overview = panels_overview()
+    assert "пауза" in overview and "secret-key" not in overview
+    datas = [b.callback_data for row in home_kb(card).keyboard for b in row]
+    assert "SHOP:q" in datas and "SHOP:tasks" in datas
+    labels = set()
+    for row in reply_keyboard().keyboard:
+        for btn in row:
+            labels.add(btn["text"] if isinstance(btn, dict) else btn.text)
+    assert BTN_QUEUE in labels and BTN_TASKS in labels
+    assert labels <= all_reply_labels()
 
 
 def test_task_status_shows_progress_and_refund():

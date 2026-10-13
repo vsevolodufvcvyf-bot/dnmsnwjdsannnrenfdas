@@ -275,7 +275,7 @@ def tasks_view() -> tuple[str, K]:
         )
         if r["task_id"]:
             kb.add(B(f"🔎 #{str(r['task_id'])[:20]} статус", callback_data=f"SHOP:st:{int(r['rid'])}"))
-    kb.row(B("◀️ Панели", callback_data="SHOP:wiz"))
+    kb.row(B("◀️ Панели", callback_data="SHOP:wiz"), B("🏠 Главная", callback_data="PANEL:home"))
     return "\n".join(lines), kb
 
 
@@ -319,6 +319,7 @@ def queue_view() -> tuple[str, K]:
         if row["chat_id"] is not None:
             kb.add(B(f"💬 Чат {int(row['chat_id'])} человеку"[:64], callback_data=f"SHOP:qhm:{rid}"))
     kb.row(B("🔄 Обновить", callback_data="SHOP:q"), B("◀️ Панели", callback_data="SHOP:wiz"))
+    kb.row(B("🏠 Главная", callback_data="PANEL:home"))
     return queue_text(rows), kb
 
 
@@ -367,6 +368,13 @@ def panel_kb(section: str) -> K:
         B("🏷 Ключевые слова", callback_data=f"SHOP:ask:{section}:kw"[:64]),
         B("◀️ К списку", callback_data="SHOP:wiz"),
     )
+    try:
+        from shop_core.breaker import pause_left
+        url = (cfg[section].get("api_url") or "").strip() if cfg.has_section(section) else ""
+        if url and pause_left(url) > 0:
+            kb.row(B("▶️ Снять паузу", callback_data=f"SHOP:unbrk:{section}"[:64]))
+    except Exception:
+        logger.debug("TRACEBACK", exc_info=True)
     return kb
 
 
@@ -386,9 +394,18 @@ def panel_text(section: str) -> str:
         f"Ключ: {mask_secret(b.get('api_key') or '')}\n"
         f"service_id: <code>{html.escape(b.get('service_id') or '—')}</code>\n"
         f"Себестоимость 1 шт.: <code>{html.escape(b.get('cost_per_unit') or '0')}</code>\n"
-        f"Слова для лота: <i>{html.escape(b.get('keywords') or '—')}</i>\n\n"
+        f"Слова для лота: <i>{html.escape(b.get('keywords') or '—')}</i>\n"
+        f"{_pause_line(b.get('api_url') or '')}\n"
         f"Сайты сам не ищу — только то, что ты вставишь."
     )
+
+
+def _pause_line(url: str) -> str:
+    from shop_core.breaker import pause_left
+    left = pause_left(url)
+    if left <= 0:
+        return "Пауза: нет. После трёх ошибок 402/502/503 или таймаутов бот 15 минут сначала берёт запасную панель."
+    return f"⏸ Пауза ещё <b>{max(1, left // 60)}</b> мин: сначала идёт запасная панель. Кнопка «Снять паузу» возвращает эту."
 
 
 def wiz_intro() -> str:
@@ -704,6 +721,20 @@ def init_pre(cardinal):
         if action == "human":
             text, kb = human_view()
             bot.send_message(c.message.chat.id, text, reply_markup=kb, parse_mode="HTML")
+            return
+        if action == "unbrk" and len(parts) > 2:
+            from shop_core.breaker import note_success
+            section = parts[2]
+            cfg = load_suppliers_cfg()
+            url = (cfg[section].get("api_url") or "").strip() if cfg.has_section(section) else ""
+            if url:
+                note_success(url)
+            bot.send_message(
+                c.message.chat.id,
+                "Пауза снята. Следующий заказ снова может пойти на эту панель.\n\n" + panel_text(section),
+                reply_markup=panel_kb(section),
+                parse_mode="HTML",
+            )
             return
         if action == "q":
             text, kb = queue_view()

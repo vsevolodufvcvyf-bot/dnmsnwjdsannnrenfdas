@@ -329,6 +329,17 @@ def panel_has_key(section: str) -> bool:
     return bool((cfg[section].get("api_key") or "").strip())
 
 
+def paused_sections() -> list[str]:
+    from shop_core.breaker import pause_left
+    cfg = load_suppliers_cfg()
+    out = []
+    for section in cfg.sections():
+        url = (cfg[section].get("api_url") or "").strip()
+        if url and pause_left(url) > 0:
+            out.append(section)
+    return out
+
+
 def panels_overview() -> str:
     cfg = load_suppliers_cfg()
     if not cfg.sections():
@@ -340,11 +351,17 @@ def panels_overview() -> str:
         key = (b.get("api_key") or "").strip()
         url = (b.get("api_url") or "").strip()
         sid = (b.get("service_id") or "").strip()
-        mark = "🟢" if on and key else ("🟡" if key else "⚪")
+        from shop_core.breaker import pause_left
+        left = pause_left(url)
+        if left:
+            mark = "⏸"
+        else:
+            mark = "🟢" if on and key else ("🟡" if key else "⚪")
         host = url.split("/")[2] if "://" in url else (url or "нет URL")
+        pause = f" · пауза {max(1, left // 60)} мин" if left else ""
         lines.append(
             f"{mark} <b>{escape(section)}</b> · ключ {mask_secret(key)}"
-            f" · {escape(host[:40])} · id {escape(sid or '—')}"
+            f" · {escape(host[:40])} · id {escape(sid or '—')}{pause}"
         )
     return "\n".join(lines)
 
@@ -364,15 +381,20 @@ def test_panel(section: str) -> str:
             {"key": key, "action": "balance"},
             timeout=8.0,
         )
+        code = int(getattr(res, "status_code", 0) or 0)
+        from shop_core.breaker import counts_as_outage, note_failure, note_success
+        if counts_as_outage(code, None):
+            note_failure(url)
         try:
             data = res.json()
         except Exception:
-            return f"Ответ не JSON (HTTP {getattr(res, 'status_code', '?')}). Проверь URL."
+            return f"Ответ не JSON (HTTP {code or '?'}). Проверь URL."
         if isinstance(data, dict):
             bal = data.get("balance", data.get("Balance"))
             cur = data.get("currency") or data.get("Currency") or ""
             err = data.get("error") or data.get("message")
             if bal is not None:
+                note_success(url)
                 return f"Панель ответила. Баланс: <code>{escape(str(bal))}</code> {escape(str(cur))}"
             if err:
                 return f"Панель ответила ошибкой: {escape(str(err)[:180])}"
@@ -380,7 +402,10 @@ def test_panel(section: str) -> str:
             return f"Панель ответила (поля: {keys}). Ключ, похоже, принят."
         return f"Странный ответ, HTTP {getattr(res, 'status_code', '?')}."
     except Exception as ex:
-        return f"Не достучался: {escape(str(ex)[:180])}"
+        from shop_core.breaker import counts_as_outage, note_failure
+        if counts_as_outage(None, ex):
+            note_failure(url)
+        return f"Не достучался: {escape(type(ex).__name__)}"
 
 
 def margin_report(query: str, sale: float, qty: int = 1) -> str:

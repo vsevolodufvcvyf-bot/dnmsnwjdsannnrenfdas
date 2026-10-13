@@ -376,14 +376,16 @@ def hold_alert_text(stuck_amount: float, held: float, order_ids: list[str] | Non
         f"⏳ Удержание не уменьшается 48 ч: <code>{stuck_amount:.2f}</code> ₽ (сейчас <code>{held:.2f}</code>).",
         "Проверь незакрытые заказы — покупатели не подтверждают или идёт спор.",
     ]
-    if order_ids:
+    if order_ids is None:
+        lines.append("Список оплаченных заказов сейчас не прочитался. Открой /stuck.")
+    elif order_ids:
         links = ", ".join(
             f"<a href=\"https://funpay.com/orders/{html.escape(oid)}/\">#{html.escape(oid)}</a>"
             for oid in order_ids[:12]
         )
         lines.append("Возможные заказы: " + links)
     else:
-        lines.append("Список оплаченных заказов сейчас не прочитался. Открой /stuck.")
+        lines.append("В прочитанных оплаченных заказах старше 48 ч пусто. Если сумма всё ещё висит — открой /stuck.")
     return "\n".join(lines)
 
 

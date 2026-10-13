@@ -62,6 +62,14 @@ def resolve_item(item_id: int) -> bool:
         return cur.rowcount > 0
 
 
+def open_count() -> int:
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS c FROM needs_human WHERE status = 'open'"
+        ).fetchone()
+    return int(row["c"] or 0)
+
+
 def open_items(limit: int = 20):
     with get_db() as conn:
         return conn.execute(
@@ -91,10 +99,25 @@ def queue_text(rows) -> str:
             bits.append(f"<a href=\"https://funpay.com/orders/{oid}/\">заказ #{oid}</a>")
         if row["chat_id"] is not None:
             bits.append(f"чат <code>{int(row['chat_id'])}</code>")
+        age = _age(row["created_at"])
+        if age:
+            bits.append(age)
         lines.append("• " + " · ".join(bits))
         if row["detail"]:
             lines.append(f"  {html.escape(str(row['detail'])[:180])}")
     return "\n".join(lines)
+
+
+def _age(created_at) -> str:
+    try:
+        mins = int((time.time() - float(created_at or 0)) // 60)
+    except (TypeError, ValueError):
+        return ""
+    if mins < 1:
+        return "только что"
+    if mins < 60:
+        return f"{mins} мин"
+    return f"{mins // 60} ч {mins % 60} мин"
 
 
 def _peer(chat_id, account_id):
