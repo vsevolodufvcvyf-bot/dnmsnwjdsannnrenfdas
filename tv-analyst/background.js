@@ -1,7 +1,8 @@
+import { decide } from "./lib/decide.js";
 import { attachDrawingTimes } from "./lib/drawings.js";
-import { step } from "./lib/engine.js";
 import { formatPrice } from "./lib/format.js";
-import { cloneMemory, memorySummary } from "./lib/learn.js";
+import { cloneMemory, maybeOpen, memorySummary, resolveOpen } from "./lib/learn.js";
+import { recheckSetup } from "./lib/recheck.js";
 import { loadMarket, mapInterval, parseTvSymbol } from "./lib/market.js";
 import { newsQuery, parseRss, scoreNews } from "./lib/news.js";
 import { CATALOG, patternName } from "./lib/patterns.js";
@@ -11,6 +12,8 @@ const MEMORY_KEY = "memory";
 const WATCH_KEY = "watchlist";
 const META_KEY = "meta";
 const NAMES_KEY = "names";
+const PENDING_KEY = "pending";
+const CONFIRM_MS = 15 * 60 * 1000;
 
 const klineCache = new Map();
 const newsCache = new Map();
@@ -144,6 +147,174 @@ function clipDrawings(drawings, shift, len) {
   return out;
 }
 
+async function freshPass(spec, interval, memory) {
+  newsCache.delete(spec.base);
+  let market;
+  try {
+    market = await loadMarket(spec, interval, fetch);
+  } catch (err) {
+    return { error: err.message || "Повторно не удалось взять свечи" };
+  }
+  let news = { tone: "neutral", score: 0, headlines: [] };
+  try {
+    news = await loadNews(spec, fetch);
+  } catch {
+    news = { tone: "neutral", score: 0, headlines: [], error: "новости" };
+  }
+  const analysis = decide(market.candles, market.higher, news, memory);
+  const last = market.candles[market.candles.length - 1];
+  return {
+    analysis,
+    news,
+    lastPrice: last?.c,
+    openedAt: last?.t,
+    time: last ? (last.t > 1e12 ? Math.floor(last.t / 1000) : Math.floor(last.t)) : null,
+  };
+}
+
+function buildOrder(spec, interval, check, time) {
+  return {
+    id: `confirm-${spec.compact}-${interval}-${check.pattern.id}`,
+    symbol: spec.compact,
+    base: spec.base,
+    tv: spec.tv || spec.compact,
+    interval,
+    direction: check.direction,
+    name: check.pattern.name,
+    patternId: check.pattern.id,
+    entry: check.pattern.entry,
+    stop: check.pattern.stop,
+    target: check.pattern.target,
+    time,
+    createdAt: Date.now(),
+  };
+}
+
+function notifyConfirm(order) {
+  chrome.notifications.create(order.id, {
+    type: "basic",
+    iconUrl: chrome.runtime.getURL("icons/icon128.png"),
+    title: `${order.base}: выставить ${order.direction === "long" ? "лонг" : "шорт"}?`,
+    message: `${order.name}. Вход ${formatPrice(order.entry)}, стоп ${formatPrice(order.stop)}, цель ${formatPrice(order.target)}. Перепроверка пройдена.`,
+    buttons: [{ title: "Выставить" }, { title: "Отмена" }],
+    requireInteraction: true,
+    priority: 2,
+  });
+}
+
+function placeOnChart(order) {
+  return new Promise((resolve) => {
+    chrome.tabs.query({ url: ["https://*.tradingview.com/*", "https://www.tradingview.com/*"] }, (tabs) => {
+      const list = tabs || [];
+      const tab = list.find((item) => item.url && item.url.toUpperCase().includes(order.symbol)) || list[0];
+      if (!tab) {
+        resolve({ ok: false, error: "Открой график этой монеты и подтверди ещё раз" });
+        return;
+      }
+      chrome.tabs.sendMessage(tab.id, { type: "place-order", order }, (res) => {
+        if (chrome.runtime.lastError) {
+          resolve({ ok: false, error: "Обнови страницу графика и подтверди ещё раз" });
+          return;
+        }
+        resolve(res || { ok: false, error: "График не ответил" });
+      });
+    });
+  });
+}
+
+async function settleConfirm(id, accept) {
+  const bag = await chrome.storage.local.get(PENDING_KEY);
+  const pending = bag[PENDING_KEY];
+  if (!pending || pending.id !== id) return { ok: false, error: "Заявка уже не актуальна" };
+  if (!accept) {
+    await chrome.storage.local.set({ [PENDING_KEY]: null });
+    chrome.notifications.clear(id);
+    return { ok: true, cancelled: true };
+  }
+  if (Date.now() - pending.createdAt > CONFIRM_MS) {
+    await chrome.storage.local.set({ [PENDING_KEY]: null });
+    chrome.notifications.clear(id);
+    return { ok: false, error: "Подтверждение устарело. Дождись нового сигнала" };
+  }
+  const memory = await loadMemory();
+  const spec = parseTvSymbol(pending.tv || pending.symbol);
+  const again = await freshPass(spec, pending.interval, memory);
+  if (again.error) return { ok: false, error: again.error };
+  const check = recheckSetup(
+    {
+      verdict: pending.direction,
+      pattern: {
+        id: pending.patternId,
+        name: pending.name,
+        entry: pending.entry,
+        stop: pending.stop,
+        target: pending.target,
+        score: 1,
+      },
+    },
+    again.analysis,
+    again.lastPrice,
+    again.news,
+  );
+  if (!check.ok) {
+    await chrome.storage.local.set({ [PENDING_KEY]: null });
+    chrome.notifications.clear(id);
+    return { ok: false, error: check.reasons.join(". "), reasons: check.reasons };
+  }
+  const order = {
+    ...pending,
+    entry: check.pattern.entry,
+    stop: check.pattern.stop,
+    target: check.pattern.target,
+    time: again.time,
+  };
+  const placed = await placeOnChart(order);
+  if (!placed.ok) return placed;
+  maybeOpen(memory, {
+    symbol: order.symbol,
+    interval: order.interval,
+    patternId: order.patternId,
+    name: order.name,
+    direction: order.direction,
+    entry: order.entry,
+    stop: order.stop,
+    target: order.target,
+    openedAt: again.openedAt,
+  });
+  await chrome.storage.local.set({ [MEMORY_KEY]: memory, [PENDING_KEY]: { ...order, status: "placed" } });
+  chrome.notifications.clear(id);
+  chrome.notifications.create(`placed-${order.symbol}`, {
+    type: "basic",
+    iconUrl: chrome.runtime.getURL("icons/icon128.png"),
+    title: `${order.base}: заявка на графике`,
+    message: `${order.direction === "long" ? "Лонг" : "Шорт"}, ${order.name}. Вход ${formatPrice(order.entry)}, стоп ${formatPrice(order.stop)}, цель ${formatPrice(order.target)}.`,
+    priority: 2,
+  });
+  return { ok: true, order };
+}
+
+async function askConfirmation(spec, interval, analysis, memory) {
+  const again = await freshPass(spec, interval, memory);
+  if (again.error) return { status: "failed", reasons: [again.error] };
+  const check = recheckSetup(analysis, again.analysis, again.lastPrice, again.news);
+  if (!check.ok) {
+    const existing = (await chrome.storage.local.get(PENDING_KEY))[PENDING_KEY];
+    if (existing && existing.symbol === spec.compact && existing.status !== "placed") {
+      await chrome.storage.local.set({ [PENDING_KEY]: null });
+      chrome.notifications.clear(existing.id);
+    }
+    return { status: "failed", reasons: check.reasons };
+  }
+  const order = buildOrder(spec, interval, check, again.time);
+  const existing = (await chrome.storage.local.get(PENDING_KEY))[PENDING_KEY];
+  if (existing && existing.id === order.id && Date.now() - existing.createdAt < CONFIRM_MS) {
+    return { status: existing.status === "placed" ? "placed" : "pending", order: existing };
+  }
+  await chrome.storage.local.set({ [PENDING_KEY]: order });
+  notifyConfirm(order);
+  return { status: "pending", order };
+}
+
 async function notify(spec, interval, analysis) {
   const bag = await chrome.storage.local.get(META_KEY);
   const meta = bag[META_KEY] || {};
@@ -210,8 +381,11 @@ async function analyze(rawSymbol, rawInterval, options = {}) {
   }
 
   const memory = await loadMemory();
-  const result = step(memory, market.candles, market.higher, news, { compact: market.symbol }, interval);
+  const symbol = market.symbol;
+  const closed = resolveOpen(memory, symbol, interval, market.candles);
+  const analysis = decide(market.candles, market.higher, news, memory);
   await chrome.storage.local.set({ [MEMORY_KEY]: memory });
+  const result = { analysis, closed, opened: false, summary: memorySummary(memory) };
 
   let watchlist = [];
   if (options.watch !== false) watchlist = await rememberWatch({ ...spec, compact: market.symbol, tv: spec.tv }, interval);
@@ -220,7 +394,18 @@ async function analyze(rawSymbol, rawInterval, options = {}) {
     watchlist = bag[WATCH_KEY] || [];
   }
 
-  if (options.notify !== false) await notify({ ...spec, compact: market.symbol }, interval, result.analysis);
+  const tradable = result.analysis.verdict === "long" || result.analysis.verdict === "short";
+  let confirmation = null;
+  if (tradable && result.analysis.pattern && options.notify !== false) {
+    confirmation = await askConfirmation({ ...spec, compact: symbol }, interval, result.analysis, memory);
+  } else if (options.notify !== false) {
+    const existing = (await chrome.storage.local.get(PENDING_KEY))[PENDING_KEY];
+    if (existing && existing.symbol === symbol && existing.status !== "placed") {
+      await chrome.storage.local.set({ [PENDING_KEY]: null });
+      chrome.notifications.clear(existing.id);
+    }
+    await notify({ ...spec, compact: symbol }, interval, result.analysis);
+  }
 
   const viewCount = 180;
   const candles = market.candles.slice(-viewCount);
@@ -244,6 +429,7 @@ async function analyze(rawSymbol, rawInterval, options = {}) {
     watchlist,
     seed: seedInfo(),
     openTrades: (memory.open || []).filter((trade) => trade.symbol === market.symbol),
+    confirmation,
   };
 }
 
@@ -283,6 +469,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     }).then(sendResponse);
     return true;
   }
+  if (msg.type === "confirm") {
+    enqueue(() => settleConfirm(msg.id, !!msg.accept))
+      .then(sendResponse)
+      .catch((err) => sendResponse({ ok: false, error: err.message || String(err) }));
+    return true;
+  }
   if (msg.type === "state") {
     enqueue(async () => {
       const memory = await loadMemory();
@@ -305,6 +497,10 @@ chrome.action.onClicked.addListener((tab) => {
     return;
   }
   chrome.tabs.create({ url: "https://www.tradingview.com/chart/?symbol=BINANCE:ETHUSDT" });
+});
+
+chrome.notifications.onButtonClicked.addListener((notifId, buttonIndex) => {
+  enqueue(() => settleConfirm(notifId, buttonIndex === 0)).catch((err) => console.warn(err));
 });
 
 chrome.notifications.onClicked.addListener(() => {

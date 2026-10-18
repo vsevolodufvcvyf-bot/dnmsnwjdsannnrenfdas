@@ -63,6 +63,7 @@
       .chip { border: 1px solid #2c3544; border-radius: 999px; padding: 3px 8px; font-size: 12px; cursor: pointer; background: #171b22; color: inherit; }
       .err { background: #2a1518; color: #ffd0d6; border-radius: 8px; padding: 8px; margin-top: 10px; font-size: 13px; }
       .foot { color: #7f8b9e; font-size: 11px; line-height: 1.4; margin-top: 12px; }
+      .confirm { margin-top: 10px; padding: 8px; border: 1px solid #f0c14a; border-radius: 10px; font-size: 13px; line-height: 1.4; }
       .check { display: flex; align-items: center; gap: 6px; color: #c5cedb; font-size: 12px; margin-top: 8px; }
     </style>
     <div class="wrap">
@@ -94,6 +95,13 @@
           <div class="meta" id="meta">Открой любую монету на TradingView.</div>
           <div class="levels" id="levels"></div>
           <ul class="reasons" id="reasons"></ul>
+          <div id="confirm" class="confirm" hidden>
+            <div id="confirmText"></div>
+            <div class="row">
+              <button class="primary" id="confirmYes" type="button">Выставить</button>
+              <button class="ghost" id="confirmNo" type="button">Отмена</button>
+            </div>
+          </div>
         </div>
         <canvas id="chart" width="720" height="280"></canvas>
         <div class="meta" id="chartNote">Линии входа, стопа и цели ставятся на свечи слева.</div>
@@ -393,6 +401,23 @@
       li.textContent = line;
       reasons.append(li);
     }
+    const confirm = data.confirmation;
+    const confirmBox = $("confirm");
+    if (confirm?.status === "pending" && confirm.order) {
+      confirmBox.hidden = false;
+      confirmBox.dataset.id = confirm.order.id;
+      const side = confirm.order.direction === "long" ? "лонг" : "шорт";
+      $("confirmText").textContent = `Перепроверка пройдена. Выставить ${side}: ${confirm.order.name}?`;
+    } else {
+      confirmBox.hidden = true;
+    }
+    if (confirm?.status === "failed") {
+      for (const line of confirm.reasons || []) {
+        const item = document.createElement("li");
+        item.textContent = "Перепроверка: " + line;
+        reasons.append(item);
+      }
+    }
     if (data.closed?.length) {
       const li = document.createElement("li");
       const hit = data.closed[0];
@@ -568,12 +593,46 @@
     $("mute").textContent = mute ? "Звук выкл" : "Звук вкл";
     chrome.runtime.sendMessage({ type: "mute", on: mute });
   });
-  chrome.runtime.onMessage.addListener((msg) => {
+  function answerConfirm(accept) {
+    const id = $("confirm").dataset.id;
+    if (!id) return;
+    $("confirmYes").disabled = true;
+    chrome.runtime.sendMessage({ type: "confirm", id, accept }, (res) => {
+      $("confirmYes").disabled = false;
+      if (accept && res?.ok) {
+        $("confirm").hidden = true;
+        $("chartNote").textContent = "Заявка стоит на графике: вход, стоп и цель.";
+        return;
+      }
+      if (!accept && res?.ok) {
+        $("confirm").hidden = true;
+        $("chartNote").textContent = "Заявку отменил.";
+        return;
+      }
+      $("chartNote").textContent = res?.error || "Не выставилось";
+    });
+  }
+
+  $("confirmYes").addEventListener("click", () => answerConfirm(true));
+  $("confirmNo").addEventListener("click", () => answerConfirm(false));
+
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg?.type === "toggle") wrap.classList.toggle("collapsed");
+    if (msg?.type === "place-order") {
+      pageAsk("order", { order: msg.order }).then((reply) => {
+        const result = reply?.result || { ok: false, error: "График не ответил" };
+        $("chartNote").textContent = result.ok
+          ? "Заявка стоит на графике: вход, стоп и цель."
+          : (result.error || "Не выставилось");
+        if (result.ok) $("confirm").hidden = true;
+        sendResponse(result);
+      });
+      return true;
+    }
   });
 
   $("foot").textContent =
-    "Разметка ставится на свечи открытого графика: шея, вход, стоп и цель. Таймфрейм берётся с графика. Если фигура не завершена, этих линий нет. Бумажный стоп снижает вес схемы. Это не ордер на бирже.";
+    "Перед заявкой сигнал проверяется ещё раз: та же фигура, цена не у стопа и не у цели, старший график и новости не против. Уведомление с кнопкой «Выставить» приходит только после этого. На биржу ордер сам не уходит: на графике ставится заявка со стопом и целью.";
 
   chrome.runtime.sendMessage({ type: "state" }, (data) => {
     if (!data?.ok) return;

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Схема — разметка графика",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Фигуры, новости и один вывод по любой монете на графике TradingView.",
   "permissions": ["storage", "alarms", "notifications"],
   "host_permissions": [

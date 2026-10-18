@@ -2,7 +2,8 @@
 (() => {
   if (window.__schemeBridge) return;
   window.__schemeBridge = true;
-  const ids = [];
+  const analysisIds = [];
+  const orderIds = [];
 
   function chart() {
     try {
@@ -27,10 +28,10 @@
     }
   }
 
-  function clear(current) {
+  function dropIds(current, bucket) {
     const target = current || chart();
     if (target && typeof target.removeEntity === "function") {
-      for (const id of ids) {
+      for (const id of bucket) {
         try {
           target.removeEntity(id, { disableUndo: true });
         } catch {
@@ -42,27 +43,32 @@
         }
       }
     }
-    ids.length = 0;
+    bucket.length = 0;
   }
 
-  function remember(id) {
+  function clear(current) {
+    dropIds(current, analysisIds);
+  }
+
+  function remember(id, bucket) {
     if (id == null || id === false) return;
     const value = typeof id === "object" && id && "then" in id ? null : id;
-    if (value != null) ids.push(value);
+    if (value != null) bucket.push(value);
   }
 
-  async function place(current, pointOrPoints, options) {
+  async function place(current, pointOrPoints, options, bucket = analysisIds) {
     const method = Array.isArray(pointOrPoints) ? "createMultipointShape" : "createShape";
     if (typeof current[method] !== "function") return null;
     const attempt = async (opts) => {
       const created = current[method](pointOrPoints, opts);
       const id = created && typeof created.then === "function" ? await created : created;
-      remember(id);
+      remember(id, bucket);
       return id;
     };
     try {
       return await attempt(options);
     } catch (err) {
+      if (options.strict) throw err;
       const slim = { shape: options.shape, text: options.text, disableSave: true, disableUndo: true };
       return attempt(slim);
     }
@@ -148,6 +154,76 @@
     return { ok: placed > 0 || !(drawings || []).length, placed, error: placed ? "" : lastError };
   }
 
+  function guessTick(price) {
+    const abs = Math.abs(price);
+    if (!(abs > 0)) return 0.01;
+    if (abs >= 100) return 0.01;
+    if (abs >= 1) return 0.0001;
+    const digits = Math.min(10, Math.ceil(-Math.log10(abs)) + 2);
+    return 10 ** -digits;
+  }
+
+  async function tickSize(current, price) {
+    try {
+      if (typeof current.symbolExt === "function") {
+        const info = await Promise.resolve(current.symbolExt());
+        if (info && info.pricescale) return (info.minmov || 1) / info.pricescale;
+      }
+    } catch {
+      /* нет справочника тика */
+    }
+    return guessTick(price);
+  }
+
+  async function placeOrder(order) {
+    const current = chart();
+    if (!current) return { ok: false, error: "График не открыт" };
+    if (!order || (order.direction !== "long" && order.direction !== "short")) {
+      return { ok: false, error: "Нет направления" };
+    }
+    const risk = Math.abs(order.entry - order.stop);
+    const reward = Math.abs(order.target - order.entry);
+    if (!(risk > 0) || !(reward > 0)) return { ok: false, error: "Нет стопа или цели" };
+    dropIds(current, orderIds);
+    const tick = await tickSize(current, order.entry);
+    const stopLevel = Math.max(1, Math.round(risk / tick));
+    const profitLevel = Math.max(1, Math.round(reward / tick));
+    const shape = order.direction === "long" ? "long_position" : "short_position";
+    try {
+      const id = await place(current, { time: order.time, price: order.entry }, {
+        shape,
+        text: order.name || "",
+        disableSave: true,
+        disableUndo: true,
+        strict: true,
+        overrides: { stopLevel, profitLevel },
+      }, orderIds);
+      if (id) return { ok: true, mode: "bracket" };
+    } catch {
+      /* позиция рисуется уровнями ниже */
+    }
+    let placed = 0;
+    for (const level of [
+      { price: order.entry, role: "entry", label: "вход" },
+      { price: order.stop, role: "stop", label: "стоп" },
+      { price: order.target, role: "target", label: "цель" },
+    ]) {
+      try {
+        const id = await place(
+          current,
+          { time: order.time, price: level.price },
+          { shape: "horizontal_line", strict: true, ...lineOptions({ ...level }) },
+          orderIds,
+        );
+        if (id) placed += 1;
+      } catch {
+        /* следующий уровень */
+      }
+    }
+    if (!placed) return { ok: false, error: "Заявку на график поставить не получилось" };
+    return { ok: true, mode: "levels", placed };
+  }
+
   async function setResolution(resolution) {
     const current = chart();
     if (!current || typeof current.setResolution !== "function" || !resolution) return { ok: false };
@@ -171,6 +247,9 @@
     }
     if (event.data.type === "resolution") {
       setResolution(event.data.resolution).then((result) => reply({ type: "resolution", result }));
+    }
+    if (event.data.type === "order") {
+      placeOrder(event.data.order).then((result) => reply({ type: "order", result }));
     }
   });
 })();

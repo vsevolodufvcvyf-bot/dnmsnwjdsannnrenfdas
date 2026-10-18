@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { decide } from "../lib/decide.js";
+import { recheckSetup } from "../lib/recheck.js";
 import { attachDrawingTimes } from "../lib/drawings.js";
 import { step } from "../lib/engine.js";
 import { emptyMemory, recordResult, weightOf } from "../lib/learn.js";
@@ -242,6 +243,19 @@ test("серия побед поднимает вес", () => {
   const memory = emptyMemory();
   for (let i = 0; i < 6; i++) recordResult(memory, { patternId: "hammer", name: "Молот", r: 0.8, outcome: "target", symbol: "BTCUSDT", interval: "15m", direction: "long", at: i });
   assert.ok(weightOf(memory, "hammer") > 1);
+});
+
+test("повторная проверка пускает только тот же сетап", () => {
+  const pattern = { id: "double_top", name: "Двойная вершина", entry: 100, stop: 110, target: 90, score: 0.8 };
+  const first = { verdict: "short", pattern, bias: "down" };
+  const ok = recheckSetup(first, { verdict: "short", pattern, bias: "down" }, 101, { tone: "neutral", score: 0 });
+  assert.equal(ok.ok, true);
+  const flipped = recheckSetup(first, { verdict: "wait", pattern: null, bias: "down" }, 101, null);
+  assert.equal(flipped.ok, false);
+  const stopped = recheckSetup(first, { verdict: "short", pattern, bias: "down" }, 111, null);
+  assert.equal(stopped.ok, false);
+  const news = recheckSetup(first, { verdict: "short", pattern, bias: "flat" }, 101, { tone: "bull", score: 3 });
+  assert.equal(news.ok, false);
 });
 
 test("линии получают время свечи для графика TradingView", () => {
