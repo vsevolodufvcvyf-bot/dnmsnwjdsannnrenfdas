@@ -51,7 +51,7 @@
       .level b { font-size: 13px; font-weight: 680; }
       .reasons { margin: 8px 0 0; padding-left: 16px; color: #d5dbe6; font-size: 13px; line-height: 1.4; }
       .reasons li { margin: 3px 0; }
-      canvas { width: 100%; height: 250px; margin-top: 10px; background: #10141b; border-radius: 12px; display: block; }
+      canvas { width: 100%; height: 140px; margin-top: 10px; background: #10141b; border-radius: 12px; display: block; }
       h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: #93a0b5; margin: 14px 0 6px; }
       .news { display: flex; flex-direction: column; gap: 6px; }
       .news a { color: #d5dbe6; text-decoration: none; font-size: 13px; line-height: 1.35; border-left: 2px solid #2c3544; padding-left: 8px; }
@@ -95,7 +95,8 @@
           <div class="levels" id="levels"></div>
           <ul class="reasons" id="reasons"></ul>
         </div>
-        <canvas id="chart" width="720" height="500"></canvas>
+        <canvas id="chart" width="720" height="280"></canvas>
+        <div class="meta" id="chartNote">Линии входа, стопа и цели ставятся на свечи слева.</div>
         <h2>Новости монеты</h2>
         <div class="news" id="news"></div>
         <h2>Что ещё видно</h2>
@@ -167,9 +168,58 @@
       "30": "30m", "30m": "30m",
       "60": "1h", "1h": "1h", "1ч": "1h",
       "240": "4h", "4h": "4h", "4ч": "4h",
-      d: "1d", "1d": "1d", "1д": "1d",
+      d: "1d", "1d": "1d", "1д": "1d", "д": "1d",
     };
     return table[s] || "";
+  }
+
+  function tvResolution(interval) {
+    return { "1m": "1", "5m": "5", "15m": "15", "30m": "30", "1h": "60", "4h": "240", "1d": "1D" }[interval] || "";
+  }
+
+  function pageAsk(type, extra) {
+    const requestId = Math.random().toString(36).slice(2);
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        window.removeEventListener("message", onMessage);
+        resolve(null);
+      }, 2500);
+      function onMessage(event) {
+        if (event.source !== window || event.data?.source !== "scheme-page" || event.data.requestId !== requestId) return;
+        clearTimeout(timer);
+        window.removeEventListener("message", onMessage);
+        resolve(event.data);
+      }
+      window.addEventListener("message", onMessage);
+      window.postMessage({ source: "scheme-assistant", type, requestId, ...(extra || {}) }, "*");
+    });
+  }
+
+  let lastDrawKey = "";
+
+  async function drawOnChart(drawings) {
+    const key = JSON.stringify(drawings || []);
+    if (key === lastDrawKey) return;
+    const reply = await pageAsk("draw", { drawings });
+    const result = reply?.result;
+    if (!reply) {
+      $("chartNote").textContent = "График ещё не ответил. Обнови страницу TradingView, линии появятся на свечах.";
+      return;
+    }
+    if (result?.placed) {
+      lastDrawKey = key;
+      const trade = (drawings || []).some((drawing) => drawing.role === "entry");
+      $("chartNote").textContent = trade
+        ? `На графике ${result.placed} линий: вход, стоп, цель и контур фигуры.`
+        : `На графике ${result.placed} линий.`;
+      return;
+    }
+    if ((drawings || []).length && result?.error) {
+      $("chartNote").textContent = "Линии на график не встали: " + result.error;
+      return;
+    }
+    lastDrawKey = key;
+    $("chartNote").textContent = "Завершённой фигуры нет, поэтому на свечах нет входа и цели.";
   }
 
   function chosenSymbol() {
@@ -446,6 +496,7 @@
         }
         const key = data?.ok ? `${data.analysis?.title}:${data.analysis?.pattern?.id || ""}:${data.analysis?.barTime || ""}` : "";
         render(data);
+        if (data?.ok) drawOnChart((data.analysis.drawings || []).filter((drawing) => drawing.type !== "dot"));
         if (key && key !== lastKey && data?.analysis?.alert) beep();
         if (key) lastKey = key;
       },
@@ -470,7 +521,17 @@
     }
   }
 
-  function syncFromPage() {
+  async function syncFromPage() {
+    const chart = (await pageAsk("read"))?.context;
+    if (chart?.symbol && chart.symbol !== detectedSymbol) {
+      detectedSymbol = chart.symbol;
+      symbolTouched = false;
+      $("symbol").value = chart.symbol;
+    }
+    const fromChart = chart?.resolution ? mapInterval(chart.resolution) : "";
+    if (fromChart && !intervalTouched && fromChart !== $("interval").value) $("interval").value = fromChart;
+    if (chart?.symbol || fromChart) return;
+
     const ctx = readContext();
     if (ctx.symbol && ctx.symbol !== detectedSymbol) {
       detectedSymbol = ctx.symbol;
@@ -491,8 +552,11 @@
     symbolTouched = true;
     refresh();
   });
-  $("interval").addEventListener("change", () => {
+  $("interval").addEventListener("change", async () => {
     intervalTouched = true;
+    const resolution = tvResolution($("interval").value);
+    if (resolution) await pageAsk("resolution", { resolution });
+    lastDrawKey = "";
     refresh();
   });
   $("watch").addEventListener("change", refresh);
@@ -509,7 +573,7 @@
   });
 
   $("foot").textContent =
-    "Один вывод на последней закрытой свече. Линии стоят на тех же ценах, по которым посчитаны вход, стоп и цель. Если фигура не дорисована, разметки сделки нет. Бумажный стоп снижает вес схемы, бумажная цель его поднимает. Это не ордер на бирже.";
+    "Разметка ставится на свечи открытого графика: шея, вход, стоп и цель. Таймфрейм берётся с графика. Если фигура не завершена, этих линий нет. Бумажный стоп снижает вес схемы. Это не ордер на бирже.";
 
   chrome.runtime.sendMessage({ type: "state" }, (data) => {
     if (!data?.ok) return;
@@ -519,11 +583,11 @@
     renderWatch(data.watchlist);
   });
 
-  syncFromPage();
-  refresh();
+  syncFromPage().then(() => refresh());
   setInterval(() => {
     const before = detectedSymbol;
-    syncFromPage();
-    if (detectedSymbol !== before || !busy) refresh();
+    syncFromPage().then(() => {
+      if (detectedSymbol !== before || !busy) refresh();
+    });
   }, 12000);
 })();

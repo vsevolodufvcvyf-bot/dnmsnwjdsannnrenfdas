@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { decide } from "../lib/decide.js";
+import { attachDrawingTimes } from "../lib/drawings.js";
 import { step } from "../lib/engine.js";
 import { emptyMemory, recordResult, weightOf } from "../lib/learn.js";
 import { dropForming, mapInterval, parseBinanceKlines, parseKucoinCandles, parseOkxCandles, parseTvSymbol } from "../lib/market.js";
@@ -71,6 +72,8 @@ test("тикер TradingView разбирается для любой монет
   assert.equal(mapInterval("15"), "15m");
   assert.equal(mapInterval("4ч"), "4h");
   assert.equal(mapInterval("1Д"), "1d");
+  assert.equal(mapInterval("1D"), "1d");
+  assert.equal(mapInterval("D"), "1d");
 });
 
 test("свечи бирж приводятся к одному виду", () => {
@@ -239,6 +242,20 @@ test("серия побед поднимает вес", () => {
   const memory = emptyMemory();
   for (let i = 0; i < 6; i++) recordResult(memory, { patternId: "hammer", name: "Молот", r: 0.8, outcome: "target", symbol: "BTCUSDT", interval: "15m", direction: "long", at: i });
   assert.ok(weightOf(memory, "hammer") > 1);
+});
+
+test("линии получают время свечи для графика TradingView", () => {
+  const candles = [
+    { t: 1_700_000_000_000, o: 1, h: 1, l: 1, c: 1, v: 1 },
+    { t: 1_700_000_900_000, o: 2, h: 2, l: 2, c: 2, v: 1 },
+  ];
+  const [line] = attachDrawingTimes(
+    [{ type: "hline", role: "neck", i1: 0, i2: 1, price: 10, label: "шея" }],
+    candles,
+  );
+  assert.equal(line.time1, 1_700_000_000);
+  assert.equal(line.time2, 1_700_000_900);
+  assert.equal(line.time, 1_700_000_900);
 });
 
 test("старший таймфрейм собирается с конца ряда", () => {

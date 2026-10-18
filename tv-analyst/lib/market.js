@@ -12,6 +12,7 @@ const INTERVAL_MS = {
   "2h": 7_200_000,
   "4h": 14_400_000,
   "1d": 86_400_000,
+  "1w": 604_800_000,
 };
 
 const HTF = {
@@ -23,7 +24,8 @@ const HTF = {
   "1h": "4h",
   "2h": "1d",
   "4h": "1d",
-  "1d": "1d",
+  "1d": "1w",
+  "1w": "1w",
 };
 
 export function intervalMs(interval) {
@@ -66,7 +68,12 @@ export function mapInterval(raw) {
     d: "1d",
     "1d": "1d",
     "1д": "1d",
+    д: "1d",
     "1day": "1d",
+    w: "1w",
+    "1w": "1w",
+    "1н": "1w",
+    н: "1w",
   };
   return table[s] || "15m";
 }
@@ -190,7 +197,7 @@ export function parseKucoinCandles(body) {
 }
 
 function okxBar(interval) {
-  return { "1m": "1m", "3m": "3m", "5m": "5m", "15m": "15m", "30m": "30m", "1h": "1H", "2h": "2H", "4h": "4H", "1d": "1D" }[interval];
+  return { "1m": "1m", "3m": "3m", "5m": "5m", "15m": "15m", "30m": "30m", "1h": "1H", "2h": "2H", "4h": "4H", "1d": "1D", "1w": "1W" }[interval];
 }
 
 function kucoinType(interval) {
@@ -204,6 +211,7 @@ function kucoinType(interval) {
     "2h": "2hour",
     "4h": "4hour",
     "1d": "1day",
+    "1w": "1week",
   }[interval];
 }
 

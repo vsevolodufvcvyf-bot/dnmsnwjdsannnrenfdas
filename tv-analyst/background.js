@@ -1,3 +1,4 @@
+import { attachDrawingTimes } from "./lib/drawings.js";
 import { step } from "./lib/engine.js";
 import { formatPrice } from "./lib/format.js";
 import { cloneMemory, memorySummary } from "./lib/learn.js";
@@ -224,6 +225,7 @@ async function analyze(rawSymbol, rawInterval, options = {}) {
   const viewCount = 180;
   const candles = market.candles.slice(-viewCount);
   const shift = market.candles.length - candles.length;
+  const drawings = attachDrawingTimes(clipDrawings(result.analysis.drawings, shift, candles.length), candles);
   return {
     ok: true,
     symbol: { ...spec, compact: market.symbol },
@@ -234,7 +236,7 @@ async function analyze(rawSymbol, rawInterval, options = {}) {
     candles,
     analysis: {
       ...result.analysis,
-      drawings: clipDrawings(result.analysis.drawings, shift, candles.length),
+      drawings,
     },
     closed: result.closed,
     opened: result.opened,
