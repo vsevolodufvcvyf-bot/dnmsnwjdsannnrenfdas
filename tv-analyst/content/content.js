@@ -211,7 +211,7 @@
       const trade = (drawings || []).some((drawing) => drawing.role === "entry");
       $("chartNote").textContent = trade
         ? `На графике ${result.placed} линий: вход, стоп, цель и контур фигуры.`
-        : `На графике ${result.placed} линий.`;
+        : "На свечах отмечены свинги. Входа и цели нет, пока фигура не завершится.";
       return;
     }
     if ((drawings || []).length && result?.error) {
@@ -496,7 +496,7 @@
         }
         const key = data?.ok ? `${data.analysis?.title}:${data.analysis?.pattern?.id || ""}:${data.analysis?.barTime || ""}` : "";
         render(data);
-        if (data?.ok) drawOnChart((data.analysis.drawings || []).filter((drawing) => drawing.type !== "dot"));
+        if (data?.ok) drawOnChart(data.analysis.drawings);
         if (key && key !== lastKey && data?.analysis?.alert) beep();
         if (key) lastKey = key;
       },
