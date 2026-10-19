@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "Playerok Desk",
+  "version": "1.0.0",
+  "description": "Личная автовыдача, аренда Steam по maFile и перевыставление своих товаров на Playerok.",
+  "permissions": ["storage", "alarms", "proxy", "webRequest", "webRequestAuthProvider", "tabs"],
+  "host_permissions": [
+    "https://playerok.com/*",
+    "https://api.steampowered.com/*",
+    "https://*.steampowered.com/*",
+    "https://steamcommunity.com/*",
+    "https://*.steamcommunity.com/*",
+    "https://login.steampowered.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Playerok Desk",
+    "default_popup": "popup.html"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://playerok.com/*"],
+      "js": ["lib/guard.js", "lib/rules.js", "lib/queries.js", "content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+#playerok-desk-chip {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 2147483646;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  max-width: min(440px, calc(100vw - 32px));
+  padding: 8px 10px;
+  border: 1px solid #3a3428;
+  border-radius: 999px;
+  background: #1c1914;
+  color: #f4efe4;
+  font: 13px/1.3 "Segoe UI", sans-serif;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+
+#playerok-desk-chip strong {
+  color: #e2a54a;
+}
+
+#playerok-desk-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 220px;
+}
+
+#playerok-desk-chip button {
+  border: 0;
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: #3a3124;
+  color: #f4efe4;
+  cursor: pointer;
+}

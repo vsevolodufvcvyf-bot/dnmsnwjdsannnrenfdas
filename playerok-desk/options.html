@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>Playerok Desk</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Playerok Desk</h1>
+        <p>Свои товары на Playerok: автовыдача, аренда Steam по maFile, код Guard, смена пароля и перевыставление уже существующего лота.</p>
+      </div>
+      <button id="save" type="button">Сохранить</button>
+    </header>
+
+    <section class="card">
+      <h2>Режим</h2>
+      <label class="check"><input id="enabled" type="checkbox"> Работать, пока открыт playerok.com</label>
+      <label class="check"><input id="practice" type="checkbox"> Учебный режим: только журнал, без сообщений, пароля и перевыставления</label>
+      <label class="check"><input id="markSent" type="checkbox"> После выдачи ставить «товар отправлен»</label>
+      <label>Опрос, секунд <input id="pollSec" type="number" min="12" max="120"></label>
+      <label>Прокси только для Steam <input id="proxy" type="text" placeholder="http://логин:пароль@хост:порт" autocomplete="off"></label>
+      <p class="note">Прокси не продаётся и не уходит в лоты. Через него идут вход в Steam и смена пароля. Сам Playerok открывается в этой вкладке, как обычный браузер. Пустое поле возвращает системный прокси.</p>
+    </section>
+
+    <section class="card">
+      <h2>Правила площадки, которые Desk не обходит</h2>
+      <ul>
+        <li>Аренда только своих игровых аккаунтов, если в разделе есть такая категория. Соцсети, почта, номера, cookie и VPN Desk не выдаёт.</li>
+        <li>Новые товары бот не создаёт и не удаляет: на Playerok это запрещено.</li>
+        <li>Перевыставление — это повторная публикация уже проданного или истёкшего лота. Бесплатный статус берётся сам. Платное поднятие отдельно и выключено.</li>
+        <li>«Я выполнил» ставится только после сообщения в чат. Бонус за отзыв не предлагается.</li>
+        <li>Одна сделка — одна выдача. Пока пароль после аренды не сменился, аккаунт снова не сдаётся.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <div class="row">
+        <h2>Автовыдача и аренда</h2>
+        <button id="addRule" type="button">Правило</button>
+      </div>
+      <div id="rules"></div>
+    </section>
+
+    <section class="card">
+      <div class="row">
+        <h2>Аккаунты Steam</h2>
+        <label class="file">maFile <input id="mafile" type="file" accept=".maFile,.json,application/json" multiple></label>
+      </div>
+      <p class="note">Пароль в maFile не лежит, его нужно вписать. Секреты остаются в этом браузере. Лимит кодов на одну аренду <input id="maxGuardCodes" type="number" min="1" max="30">, срок не длиннее <input id="maxRentHours" type="number" min="1" max="336"> часов.</p>
+      <div id="accounts"></div>
+    </section>
+
+    <section class="card">
+      <h2>Перевыставление</h2>
+      <label class="check"><input id="relistSold" type="checkbox"> После смены пароля снова выставлять привязанный проданный лот, если есть бесплатный статус</label>
+      <label class="check"><input id="boostEnabled" type="checkbox"> Платно поднимать активные лоты, которые выпали из топа</label>
+      <label>Не дороже, ₽ <input id="boostMaxPrice" type="number" min="0" max="500"></label>
+      <label>Не чаще, раз в день <input id="boostDailyCap" type="number" min="0" max="100"></label>
+      <label>Поднимать, если позиция хуже <input id="boostAfterPosition" type="number" min="1" max="500"></label>
+    </section>
+
+    <section class="card">
+      <h2>Журнал</h2>
+      <ol id="log"></ol>
+    </section>
+  </main>
+  <script src="lib/rules.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>
