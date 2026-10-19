@@ -6,6 +6,7 @@ import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const rules = require("../lib/rules.js");
+const proxy = require("../lib/proxy.js");
 require("../lib/guard.js");
 require("../lib/rsa.js");
 const steam = require("../lib/steam.js");
@@ -250,6 +251,52 @@ test("password change confirms only the matching steam recovery and encrypts the
   const decrypt = (value) => pkcs1Decrypt(privateKey, value);
   assert.equal(decrypt(verify.form.password), "OldPass123");
   assert.equal(decrypt(changed.form.password), "NewPass123");
+});
+
+test("steam proxy is assembled only after host and port are known", () => {
+  const described = proxy.describe("http://user:p%40ss@127.0.0.1:9050");
+  assert.equal(described.enabled, true);
+  assert.match(described.pac, /PROXY 127\.0\.0\.1:9050/);
+  assert.equal(described.user, "user");
+  assert.equal(described.pass, "p@ss");
+  assert.match(proxy.describe("socks5://10.0.0.2:1080").pac, /SOCKS5 10\.0\.0\.2:1080/);
+  assert.equal(proxy.describe("").enabled, false);
+  assert.match(proxy.describe("http://bad host").error, /прокси/);
+});
+
+test("shared warehouse, review reply and funpay order parse", () => {
+  const desk = rules.defaultDesk();
+  desk.market = "playerok";
+  desk.warehouses = [{ id: "w", title: "ключи", stock: ["A", "B"] }];
+  const rule = { id: "r", active: true, kind: "stock", itemIds: ["item-1"], warehouseId: "w", stock: [], market: "playerok", keywords: "", template: "{product}" };
+  const decision = rules.decideDeal({
+    deal: deal({ item: { id: "item-1", name: "Ключ", price: 10, category: { name: "" } } }),
+    rules: [rule, { id: "fp", active: true, kind: "stock", itemIds: ["item-1"], keywords: "", stock: ["X"], market: "funpay" }],
+    accounts: [],
+    state: { processed: {} },
+    now,
+    settings: desk,
+  });
+  assert.equal(decision.rule.id, "r");
+  assert.equal(decision.line, "A");
+  const plugins = require("../lib/plugins.js");
+  assert.equal(plugins.consumeStock({ warehouses: desk.warehouses, rules: [rule] }, rule), "A");
+  assert.deepEqual(desk.warehouses[0].stock, ["B"]);
+  plugins.restoreStock({ warehouses: desk.warehouses, rules: [rule] }, rule, "A");
+  assert.deepEqual(desk.warehouses[0].stock, ["A", "B"]);
+  assert.equal(plugins.replyForRating({ enabled: true, stars: { "5": "бонус за пятёрку" } }, 5), "");
+  assert.equal(plugins.replyForRating({ enabled: true, stars: { "5": "Спасибо за заказ." } }, 5), "Спасибо за заказ.");
+  const plan = plugins.planReminder({ confirmedAt: now, sent: 0 }, { enabled: true, firstDelayMin: 60, intervalMin: 1440, times: 2 }, now + 61 * 60000, false);
+  assert.equal(plan.send, true);
+  assert.equal(plugins.hourAllows(["0:14"], new Date("2026-10-19T14:30:00")), true);
+  const page = plugins.parseFunpaySales(`<body data-app-data="{&quot;csrf-token&quot;:&quot;tok&quot;,&quot;userId&quot;:10}"><a class="tc-item info" href="https://funpay.com/orders/ABCD/"><div class="tc-order">#ABCD</div><div class="order-desc"><div>Ключ CS2</div></div><div class="tc-price">150 ₽</div><div class="media-user-name"><span data-href="https://funpay.com/users/20/">buyer</span></div></a></body>`);
+  assert.equal(page.csrf, "tok");
+  assert.equal(page.sales.length, 1);
+  assert.equal(page.sales[0].status, "paid");
+  assert.equal(page.sales[0].id, "ABCD");
+  assert.equal(page.sales[0].buyer, "buyer");
+  assert.equal(page.sales[0].chatId, "users-10-20");
+  assert.equal(page.sales[0].price, 150);
 });
 
 test("extension does not create or delete playerok items", () => {

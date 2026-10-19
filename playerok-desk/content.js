@@ -133,7 +133,51 @@ async function boostItem(itemId, priorityId) {
   });
 }
 
-async function listDeals(userId) {
+function noteBuyer(desk, deal) {
+  const name = deal.user && deal.user.username;
+  DeskPlugins.rememberBuyer(desk.state, name, deal.id, deal.item && deal.item.price, deal.status);
+  if (!name) return;
+  const card = DeskPlugins.dossier(desk.state, name);
+  if (card.count > 1 || card.refunds) {
+    DeskRules.addLog(desk.state, name + ": " + card.count + " продаж на " + card.sum + " ₽, возвратов " + card.refunds, Date.now());
+  }
+}
+
+async function maybePurchaseReply(desk, deal, chatId) {
+  const text = DeskPlugins.safeText(desk.replies && desk.replies.onPurchase);
+  if (!desk.replies || !desk.replies.enabled || !text || desk.practice) return;
+  await sendChat(chatId, DeskRules.renderTemplate(text, {
+    name: (deal.user && deal.user.username) || "",
+    lot: (deal.item && deal.item.name) || "",
+    price: (deal.item && deal.item.price) || "",
+    link: "https://playerok.com/deal/" + deal.id,
+    text: "",
+    rating: "",
+  }));
+}
+
+async function maybeMessageReply(desk, chat, message) {
+  const text = DeskPlugins.safeText(desk.replies && desk.replies.onMessage);
+  if (!desk.replies || !desk.replies.enabled || !text) return;
+  const last = Number((desk.state.replyAt || {})[chat.id] || 0);
+  if (Date.now() - last < 30000) return;
+  desk.state.replyAt[chat.id] = Date.now();
+  const body = DeskRules.renderTemplate(text, {
+    name: message.user.username,
+    text: message.text || "",
+    lot: "",
+    price: "",
+    link: "",
+    rating: "",
+  });
+  if (desk.practice) {
+    DeskRules.addLog(desk.state, "учебный: ответил бы " + message.user.username, Date.now());
+    return;
+  }
+  await sendChat(chat.id, body);
+}
+
+async function listDeals(userId, statuses) {
   const out = [];
   let after = null;
   for (let page = 0; page < 3; page++) {
@@ -142,7 +186,7 @@ async function listDeals(userId) {
       query: DeskQueries.DOC.deals,
       variables: {
         pagination: { first: 24, after },
-        filter: { userId, direction: "OUT", status: ["PAID"] },
+        filter: { userId, direction: "OUT", status: statuses || ["PAID"] },
         showForbiddenImage: true,
       },
     });
@@ -226,20 +270,20 @@ async function handleDeal(desk, brief) {
   if (decision.action === "deliver") {
     const line = decision.line || "";
     const text = DeskRules.deliveryText(decision.rule, deal, line);
-    if (decision.rule.kind === "stock") {
-      desk.rules = desk.rules.map((rule) => rule.id === decision.rule.id ? DeskRules.takeStock(rule) : rule);
-    }
+    if (decision.rule.kind === "stock") DeskPlugins.consumeStock(desk, decision.rule);
     await saveDesk(desk);
     try {
       await sendChat(chatId, text);
     } catch (error) {
-      desk.rules = desk.rules.map((rule) => rule.id === decision.rule.id ? DeskRules.returnStock(rule, line) : rule);
+      DeskPlugins.restoreStock(desk, decision.rule, line);
       desk.state.processed[deal.id] = { status: "failed", at: now };
       DeskRules.addLog(desk.state, "выдача не ушла, склад вернул: " + error.message, now);
       return desk;
     }
     desk.state.processed[deal.id] = { status: desk.markSent ? "sent_pending_mark" : "sent", at: now };
+    noteBuyer(desk, deal);
     DeskRules.addLog(desk.state, "выдал «" + (deal.item && deal.item.name || "товар") + "»", now);
+    await maybePurchaseReply(desk, deal, chatId);
     if (desk.markSent) {
       try {
         await markSent(deal.id);
@@ -282,8 +326,9 @@ async function handleDeal(desk, brief) {
     DeskRules.addLog(desk.state, "аренда " + account.login + " не ушла: " + error.message, now);
     return desk;
   }
-  desk.state.processed[deal.id] = { status: "sent", at: now };
-  DeskRules.addLog(desk.state, "сдал " + account.login + " до " + new Date(account.expireAt).toLocaleTimeString("ru-RU"), now);
+    desk.state.processed[deal.id] = { status: "sent", at: now };
+    noteBuyer(desk, deal);
+    DeskRules.addLog(desk.state, "сдал " + account.login + " до " + new Date(account.expireAt).toLocaleTimeString("ru-RU"), now);
   if (desk.markSent) {
     try { await markSent(deal.id); } catch (error) {
       DeskRules.addLog(desk.state, "доступ ушёл, отметка «отправлен» нет: " + error.message, now);
@@ -312,7 +357,10 @@ async function scanChats(desk) {
     desk.state.seenChats[chat.id] = message.id;
     const author = message.user && message.user.username;
     if (!author || author === desk.viewerName) continue;
-    if (!DeskRules.guardRequest(message.text)) continue;
+    if (!DeskRules.guardRequest(message.text)) {
+      await maybeMessageReply(desk, chat, message);
+      continue;
+    }
     const account = DeskRules.findRental(desk.accounts, chat, desk.viewerName, Date.now());
     if (!account) continue;
     if (account.codesGiven >= desk.maxGuardCodes) {
@@ -403,6 +451,7 @@ async function relistScan(desk) {
     for (const item of active) {
       const blocked = desk.accounts.some((account) => account.itemId === item.id && (account.busy || account.needsReset));
       if (blocked) continue;
+      if (!DeskPlugins.hourAllows(desk.boostSlots, new Date())) continue;
       if (!DeskRules.canBoost(item, desk.state, desk, Date.now())) continue;
       const data = await gql("itemPriorityStatuses", {
         hash: DeskQueries.HASH.itemPriorityStatuses,
@@ -421,6 +470,87 @@ async function relistScan(desk) {
       }
       desk.state.relistAt["boost:" + item.id] = Date.now();
     }
+  }
+  return desk;
+}
+
+async function scanAftercare(desk) {
+  if (!desk.viewerId) return desk;
+  const wantReviews = desk.replies && desk.replies.enabled;
+  const wantReminder = desk.reminder && desk.reminder.enabled;
+  if (!wantReviews && !wantReminder) return desk;
+  const confirmed = await listDeals(desk.viewerId, ["CONFIRMED", "CONFIRMED_AUTOMATICALLY"]);
+  for (const brief of confirmed) {
+    const name = brief.user && brief.user.username;
+    DeskPlugins.rememberBuyer(desk.state, name, brief.id, brief.item && brief.item.price, brief.status);
+    const review = brief.testimonial;
+    if (wantReviews && review && review.rating && !desk.state.reviewsAnswered[brief.id]) {
+      const template = DeskPlugins.replyForRating(desk.replies, review.rating);
+      if (!template) {
+        desk.state.reviewsAnswered[brief.id] = "skip";
+      } else if (desk.practice) {
+        desk.state.reviewsAnswered[brief.id] = "preview";
+        DeskRules.addLog(desk.state, "учебный: ответ на " + review.rating + "★ для " + (name || brief.id), Date.now());
+      } else {
+        const full = await gql("deal", {
+          hash: DeskQueries.HASH.deal,
+          query: DeskQueries.DOC.deal,
+          variables: { id: brief.id, hasSupportAccess: false, showForbiddenImage: true },
+        });
+        const chatId = full.deal && full.deal.chat && full.deal.chat.id;
+        if (chatId) {
+          await sendChat(chatId, DeskRules.renderTemplate(template, {
+            name: name || "",
+            lot: (brief.item && brief.item.name) || "",
+            price: (brief.item && brief.item.price) || "",
+            link: "https://playerok.com/deal/" + brief.id,
+            text: review.text || "",
+            rating: review.rating,
+          }));
+          desk.state.reviewsAnswered[brief.id] = "sent";
+        }
+      }
+    }
+    if (!wantReminder || review) continue;
+    const entry = desk.state.reminders[brief.id] || { confirmedAt: Date.now(), sent: 0 };
+    const plan = DeskPlugins.planReminder(entry, desk.reminder, Date.now(), false);
+    if (!plan || !plan.send) {
+      if (!desk.state.reminders[brief.id]) {
+        desk.state.reminders[brief.id] = {
+          confirmedAt: Date.now(),
+          sent: 0,
+          nextAt: Date.now() + desk.reminder.firstDelayMin * 60000,
+        };
+      }
+      continue;
+    }
+    const template = DeskPlugins.safeText(desk.reminder.text);
+    if (!template) {
+      DeskRules.addLog(desk.state, "напоминание не отправлено: в тексте бонус или скидка", Date.now());
+      desk.state.reminders[brief.id] = { confirmedAt: entry.confirmedAt, sent: desk.reminder.times, nextAt: 0 };
+      continue;
+    }
+    if (desk.practice) {
+      DeskRules.addLog(desk.state, "учебный: напомнил бы про отзыв " + (name || brief.id), Date.now());
+    } else {
+      const full = await gql("deal", {
+        hash: DeskQueries.HASH.deal,
+        query: DeskQueries.DOC.deal,
+        variables: { id: brief.id, hasSupportAccess: false, showForbiddenImage: true },
+      });
+      const chatId = full.deal && full.deal.chat && full.deal.chat.id;
+      if (chatId) {
+        await sendChat(chatId, DeskRules.renderTemplate(template, {
+          name: name || "",
+          lot: (brief.item && brief.item.name) || "",
+          price: (brief.item && brief.item.price) || "",
+          link: "https://playerok.com/deal/" + brief.id,
+          text: "",
+          rating: "",
+        }));
+      }
+    }
+    desk.state.reminders[brief.id] = { confirmedAt: entry.confirmedAt || Date.now(), sent: plan.sent, nextAt: plan.nextAt };
   }
   return desk;
 }
@@ -450,12 +580,13 @@ async function tick() {
     if (!viewer.viewer || !viewer.viewer.id) throw new Error("нет входа на Playerok");
     desk.viewerId = viewer.viewer.id;
     desk.viewerName = viewer.viewer.username;
-    const deals = await listDeals(viewer.viewer.id);
+    const deals = await listDeals(viewer.viewer.id, ["PAID"]);
     for (const brief of deals) {
       desk = await handleDeal(desk, brief);
       await saveDesk(desk);
     }
     desk = await scanChats(desk);
+    desk = await scanAftercare(desk);
     await saveDesk(desk);
     desk = await finishOneRental(desk);
     await saveDesk(desk);

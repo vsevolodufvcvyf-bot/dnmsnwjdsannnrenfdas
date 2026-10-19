@@ -42,6 +42,22 @@
       boostDailyCap: 10,
       boostMinIntervalSec: 6 * 3600,
       boostAfterPosition: 20,
+      boostSlots: [],
+      warehouses: [],
+      replies: {
+        enabled: false,
+        onPurchase: "",
+        onMessage: "",
+        stars: { "1": "", "2": "", "3": "", "4": "", "5": "" },
+      },
+      reminder: {
+        enabled: false,
+        firstDelayMin: 60,
+        intervalMin: 1440,
+        times: 2,
+        text: "Если с заказом всё в порядке, отзыв поможет другим покупателям. {link}",
+      },
+      fph: { enabled: false, gameIds: [] },
       rules: [],
       accounts: [],
       state: {
@@ -52,6 +68,10 @@
         boostDay: {},
         waitLog: {},
         log: [],
+        reminders: {},
+        reviewsAnswered: {},
+        buyers: {},
+        replyAt: {},
       },
     };
   }
@@ -77,6 +97,9 @@
       keywords: String(rule.keywords || ""),
       template: String(rule.template || "Ваш товар:\n{product}"),
       stock: Array.isArray(rule.stock) ? rule.stock.map((x) => String(x)) : splitLines(rule.stockText || ""),
+      warehouseId: String(rule.warehouseId || ""),
+      market: rule.market === "funpay" || rule.market === "both" ? rule.market : "playerok",
+      folder: String(rule.folder || ""),
     };
   }
 
@@ -124,6 +147,14 @@
       boostDailyCap: clamp(raw.boostDailyCap ?? 10, 0, 100),
       boostMinIntervalSec: clamp(raw.boostMinIntervalSec ?? base.boostMinIntervalSec, 600, 7 * 86400),
       boostAfterPosition: clamp(raw.boostAfterPosition ?? 20, 1, 500),
+      boostSlots: Array.isArray(raw.boostSlots) ? raw.boostSlots.map((slot) => String(slot)) : [],
+      warehouses: Array.isArray(raw.warehouses) ? raw.warehouses.map(normalizeWarehouse) : [],
+      replies: normalizeReplies(raw.replies),
+      reminder: normalizeReminder(raw.reminder),
+      fph: {
+        enabled: flag(raw.fph && raw.fph.enabled, false),
+        gameIds: splitList(raw.fph && raw.fph.gameIds),
+      },
       rules: Array.isArray(raw.rules) ? raw.rules.map(normalizeRule) : [],
       accounts: Array.isArray(raw.accounts) ? raw.accounts.map(normalizeAccount) : [],
       state: {
@@ -133,8 +164,47 @@
         relistAt: state.relistAt && typeof state.relistAt === "object" ? state.relistAt : {},
         boostDay: state.boostDay && typeof state.boostDay === "object" ? state.boostDay : {},
         waitLog: state.waitLog && typeof state.waitLog === "object" ? state.waitLog : {},
+        reminders: state.reminders && typeof state.reminders === "object" ? state.reminders : {},
+        reviewsAnswered: state.reviewsAnswered && typeof state.reviewsAnswered === "object" ? state.reviewsAnswered : {},
+        buyers: state.buyers && typeof state.buyers === "object" ? state.buyers : {},
+        replyAt: state.replyAt && typeof state.replyAt === "object" ? state.replyAt : {},
         log: Array.isArray(state.log) ? state.log.slice(0, 80) : [],
       },
+    };
+  }
+
+  function normalizeWarehouse(warehouse) {
+    return {
+      id: String(warehouse.id || crypto.randomUUID()),
+      title: String(warehouse.title || "Общий склад"),
+      stock: Array.isArray(warehouse.stock) ? warehouse.stock.map((line) => String(line)) : splitLines(warehouse.stockText || ""),
+    };
+  }
+
+  function normalizeReplies(replies) {
+    const stars = (replies && replies.stars) || {};
+    return {
+      enabled: flag(replies && replies.enabled, false),
+      onPurchase: String((replies && replies.onPurchase) || ""),
+      onMessage: String((replies && replies.onMessage) || ""),
+      stars: {
+        "1": String(stars["1"] || ""),
+        "2": String(stars["2"] || ""),
+        "3": String(stars["3"] || ""),
+        "4": String(stars["4"] || ""),
+        "5": String(stars["5"] || ""),
+      },
+    };
+  }
+
+  function normalizeReminder(reminder) {
+    const base = defaultDesk().reminder;
+    return {
+      enabled: flag(reminder && reminder.enabled, false),
+      firstDelayMin: reminder && reminder.firstDelayMin != null ? clamp(reminder.firstDelayMin, 5, 10080) : base.firstDelayMin,
+      intervalMin: reminder && reminder.intervalMin != null ? clamp(reminder.intervalMin, 15, 10080) : base.intervalMin,
+      times: reminder && reminder.times != null ? clamp(reminder.times, 1, 5) : base.times,
+      text: String((reminder && reminder.text) || base.text),
     };
   }
 
@@ -209,10 +279,24 @@
     return RENT_BLOCK.some((rx) => rx.test(text || ""));
   }
 
-  function matchRule(rules, deal) {
+  function servesMarket(rule, market) {
+    const value = (rule && rule.market) || "playerok";
+    if (market === "funpay") return value === "funpay" || value === "both";
+    return value !== "funpay";
+  }
+
+  function stockLines(rule, warehouses) {
+    if (rule && rule.warehouseId) {
+      const found = (warehouses || []).find((item) => item.id === rule.warehouseId);
+      return found && Array.isArray(found.stock) ? found.stock : [];
+    }
+    return (rule && rule.stock) || [];
+  }
+
+  function matchRule(rules, deal, market) {
     const itemId = deal && deal.item && deal.item.id;
     const name = dealText(deal).toLowerCase();
-    const active = (rules || []).filter((rule) => rule.active !== false);
+    const active = (rules || []).filter((rule) => rule.active !== false && servesMarket(rule, market || "playerok"));
     const byId = active.find((rule) => (rule.itemIds || []).includes(itemId));
     if (byId) return byId;
     let best = null;
@@ -322,7 +406,7 @@
     if (deal.status !== "PAID") return { action: "skip", reason: "статус " + (deal.status || "неизвестен") };
     if (deal.hasProblem) return { action: "park", reason: "по сделке проблема, сам не выдаю" };
     if (deal.isAutomated) return { action: "park", reason: "Playerok уже выдал товар сам" };
-    const rule = matchRule(rules, deal);
+    const rule = matchRule(rules, deal, settings && settings.market);
     if (!rule) return { action: "skip", reason: "нет правила" };
     const required = missingRequired(deal);
     if (required.length) {
@@ -338,8 +422,9 @@
       return { action: "rent", rule, account, durationSec: duration.seconds, how: duration.how };
     }
     if (rule.kind === "stock") {
-      if (!(rule.stock || []).length) return { action: "wait", reason: "склад правила «" + (rule.title || rule.id) + "» пуст" };
-      return { action: "deliver", rule, line: rule.stock[0] };
+      const lines = stockLines(rule, settings && settings.warehouses);
+      if (!lines.length) return { action: "wait", reason: "склад правила «" + (rule.title || rule.id) + "» пуст" };
+      return { action: "deliver", rule, line: lines[0] };
     }
     return { action: "deliver", rule, line: "" };
   }
@@ -386,7 +471,7 @@
     if (!item || (item.status !== "SOLD" && item.status !== "EXPIRED")) return false;
     const rule = matchRule(desk.rules || [], { item });
     if (rule && rule.kind !== "rent" && rule.relist) {
-      if (rule.kind === "stock" && !(rule.stock || []).length) return false;
+      if (rule.kind === "stock" && !stockLines(rule, desk.warehouses).length) return false;
       return true;
     }
     if (!desk.relistSold) return false;
@@ -485,6 +570,8 @@
     parseRentDuration,
     blockedRent,
     matchRule,
+    servesMarket,
+    stockLines,
     renderTemplate,
     buyerFields,
     formatDuration,

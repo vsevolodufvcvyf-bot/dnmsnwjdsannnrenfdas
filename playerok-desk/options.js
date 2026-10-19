@@ -18,6 +18,18 @@ function readCommon() {
   desk.boostMaxPrice = Number(document.getElementById("boostMaxPrice").value);
   desk.boostDailyCap = Number(document.getElementById("boostDailyCap").value);
   desk.boostAfterPosition = Number(document.getElementById("boostAfterPosition").value);
+  desk.replies.enabled = document.getElementById("repliesEnabled").checked;
+  desk.replies.onPurchase = document.getElementById("onPurchase").value;
+  desk.replies.onMessage = document.getElementById("onMessage").value;
+  for (const star of ["1", "2", "3", "4", "5"]) desk.replies.stars[star] = document.getElementById("star" + star).value;
+  desk.reminder.enabled = document.getElementById("reminderEnabled").checked;
+  desk.reminder.firstDelayMin = Number(document.getElementById("reminderFirst").value);
+  desk.reminder.intervalMin = Number(document.getElementById("reminderInterval").value);
+  desk.reminder.times = Number(document.getElementById("reminderTimes").value);
+  desk.reminder.text = document.getElementById("reminderText").value;
+  desk.boostSlots = document.getElementById("boostSlots").value.split(/[\s,]+/).map((slot) => slot.trim()).filter(Boolean);
+  desk.fph.enabled = document.getElementById("fphEnabled").checked;
+  desk.fph.gameIds = DeskRules.splitList(document.getElementById("fphGames").value);
 }
 
 function paint() {
@@ -29,6 +41,19 @@ function paint() {
   document.getElementById("boostMaxPrice").value = desk.boostMaxPrice;
   document.getElementById("boostDailyCap").value = desk.boostDailyCap;
   document.getElementById("boostAfterPosition").value = desk.boostAfterPosition;
+  document.getElementById("repliesEnabled").checked = desk.replies.enabled;
+  document.getElementById("onPurchase").value = desk.replies.onPurchase;
+  document.getElementById("onMessage").value = desk.replies.onMessage;
+  for (const star of ["1", "2", "3", "4", "5"]) document.getElementById("star" + star).value = desk.replies.stars[star] || "";
+  document.getElementById("reminderEnabled").checked = desk.reminder.enabled;
+  document.getElementById("reminderFirst").value = desk.reminder.firstDelayMin;
+  document.getElementById("reminderInterval").value = desk.reminder.intervalMin;
+  document.getElementById("reminderTimes").value = desk.reminder.times;
+  document.getElementById("reminderText").value = desk.reminder.text;
+  document.getElementById("boostSlots").value = (desk.boostSlots || []).join(", ");
+  document.getElementById("fphEnabled").checked = desk.fph.enabled;
+  document.getElementById("fphGames").value = (desk.fph.gameIds || []).join(", ");
+  paintWarehouses();
   paintRules();
   paintAccounts();
   paintLog();
@@ -55,7 +80,10 @@ function ruleCard(rule, index) {
     labeled("ID товаров через запятую", input("items", (rule.itemIds || []).join(", "), (value) => { rule.itemIds = DeskRules.splitList(value); })),
     labeled("Слова в названии, если ID нет", input("words", rule.keywords, (value) => { rule.keywords = value; })),
     labeled("Сообщение. Для склада: {product} {name} {lot} {fields} {comment}", area(rule.template, (value) => { rule.template = value; })),
-    labeled("Склад, одна выдача на строку", area((rule.stock || []).join("\n"), (value) => { rule.stock = DeskRules.splitLines(value); }))
+    labeled("Склад, одна выдача на строку", area((rule.stock || []).join("\n"), (value) => { rule.stock = DeskRules.splitLines(value); })),
+    labeled("Общий склад", warehouseSelect(rule)),
+    labeled("Площадка", select([["playerok", "Playerok"], ["funpay", "FunPay"], ["both", "Обе"]], rule.market || "playerok", (value) => { rule.market = value; })),
+    labeled("Папка", input("folder", rule.folder || "", (value) => { rule.folder = value; }))
   );
   const active = check("Правило включено", rule.active !== false, (value) => { rule.active = value; });
   const relist = check("Перевыставлять этот лот после продажи, если склад не пуст", Boolean(rule.relist), (value) => { rule.relist = value; });
@@ -135,6 +163,53 @@ function accountCard(account, index) {
   return box;
 }
 
+function warehouseSelect(rule) {
+  const field = document.createElement("select");
+  const empty = document.createElement("option");
+  empty.value = "";
+  empty.textContent = "Свой список правила";
+  field.append(empty);
+  for (const warehouse of desk.warehouses) {
+    const option = document.createElement("option");
+    option.value = warehouse.id;
+    option.textContent = warehouse.title || warehouse.id;
+    field.append(option);
+  }
+  field.value = rule.warehouseId || "";
+  field.addEventListener("change", () => { rule.warehouseId = field.value; });
+  return field;
+}
+
+function paintWarehouses() {
+  const root = document.getElementById("warehouses");
+  root.replaceChildren();
+  if (!desk.warehouses.length) {
+    const empty = document.createElement("p");
+    empty.className = "note";
+    empty.textContent = "Общих складов нет.";
+    root.append(empty);
+    return;
+  }
+  desk.warehouses.forEach((warehouse, index) => {
+    const box = document.createElement("div");
+    box.className = "rule";
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "quiet";
+    remove.textContent = "Удалить склад";
+    remove.addEventListener("click", () => {
+      desk.warehouses.splice(index, 1);
+      paintWarehouses();
+    });
+    box.append(
+      labeled("Название", input("title", warehouse.title, (value) => { warehouse.title = value; })),
+      labeled("Строки", area((warehouse.stock || []).join("\n"), (value) => { warehouse.stock = DeskRules.splitLines(value); })),
+      remove
+    );
+    root.append(box);
+  });
+}
+
 function paintLog() {
   const root = document.getElementById("log");
   root.replaceChildren();
@@ -203,6 +278,12 @@ document.getElementById("save").addEventListener("click", async () => {
   const button = document.getElementById("save");
   button.textContent = "Сохранено";
   setTimeout(() => { button.textContent = "Сохранить"; }, 1200);
+});
+
+document.getElementById("addWarehouse").addEventListener("click", () => {
+  readCommon();
+  desk.warehouses.push(DeskRules.normalize({ warehouses: [{ title: "Склад", stock: [] }] }).warehouses[0]);
+  paintWarehouses();
 });
 
 document.getElementById("addRule").addEventListener("click", () => {

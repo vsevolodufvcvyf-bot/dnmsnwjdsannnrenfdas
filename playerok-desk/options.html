@@ -63,6 +63,47 @@
     </section>
 
     <section class="card">
+      <div class="row">
+        <h2>Общий склад</h2>
+        <button id="addWarehouse" type="button">Склад</button>
+      </div>
+      <p class="note">Несколько лотов берут строки из одного списка. У правила без склада остаётся свой список.</p>
+      <div id="warehouses"></div>
+    </section>
+
+    <section class="card">
+      <h2>Автоответы</h2>
+      <label class="check"><input id="repliesEnabled" type="checkbox"> Отвечать самому</label>
+      <label>После выдачи <textarea id="onPurchase"></textarea></label>
+      <label>На сообщение покупателя <textarea id="onMessage"></textarea></label>
+      <p class="note">Подстановки: {name} {lot} {price} {link} {text} {rating}. Бонус, скидка и подарок за отзыв не отправляются.</p>
+      <div class="grid">
+        <label>1★ <input id="star1" type="text"></label>
+        <label>2★ <input id="star2" type="text"></label>
+        <label>3★ <input id="star3" type="text"></label>
+        <label>4★ <input id="star4" type="text"></label>
+        <label>5★ <input id="star5" type="text"></label>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Напоминание об отзыве</h2>
+      <label class="check"><input id="reminderEnabled" type="checkbox"> Напомнить после подтверждения, если отзыва ещё нет</label>
+      <label>Первый раз через, минут <input id="reminderFirst" type="number" min="5" max="10080"></label>
+      <label>Повтор через, минут <input id="reminderInterval" type="number" min="15" max="10080"></label>
+      <label>Сколько раз <input id="reminderTimes" type="number" min="1" max="5"></label>
+      <label>Текст <textarea id="reminderText"></textarea></label>
+      <label>Часы буста, пн=0 … вс=6. Пример: 0:14, 4:19 <input id="boostSlots" type="text"></label>
+    </section>
+
+    <section class="card">
+      <h2>FPH, FunPay</h2>
+      <label class="check"><input id="fphEnabled" type="checkbox"> Выдавать те же правила на funpay.com</label>
+      <p class="note">Правило должно быть «FunPay» или «обе площадки». Поднятие: id игры и id раздела через двоеточие, несколько через запятую. Откройте вкладку FunPay, расширение работает в ней.</p>
+      <label>Игры для поднятия <input id="fphGames" type="text" placeholder="123:456"></label>
+    </section>
+
+    <section class="card">
       <h2>Журнал</h2>
       <ol id="log"></ol>
     </section>

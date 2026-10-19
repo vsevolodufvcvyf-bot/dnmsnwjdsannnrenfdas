@@ -17,6 +17,7 @@
       deals(pagination: $pagination, filter: $filter) {
         edges { node { id status direction hasProblem isAutomated commentFromBuyer
           user { id username }
+          testimonial { id rating text }
           item { id name price status category { name } user { id } }
         } }
         pageInfo { endCursor hasNextPage }

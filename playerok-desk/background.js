@@ -1,4 +1,4 @@
-importScripts("lib/guard.js", "lib/rsa.js", "lib/rules.js", "lib/steam.js");
+importScripts("lib/guard.js", "lib/rsa.js", "lib/rules.js", "lib/steam.js", "lib/proxy.js");
 
 const proxyAuth = { user: "", pass: "" };
 let appliedProxy = null;
@@ -12,43 +12,25 @@ function saveDesk(desk) {
 }
 
 function applyProxy(proxyUrl) {
-  const next = proxyUrl || "";
+  const next = String(proxyUrl || "").trim();
   if (next === appliedProxy) return;
+  const described = DeskProxy.describe(next);
+  if (next && !described.enabled) {
+    console.warn(described.error || "прокси не применён");
+    return;
+  }
   appliedProxy = next;
-  if (!next) {
-    proxyAuth.user = "";
-    proxyAuth.pass = "";
-    chrome.proxy.settings.set({ value: { mode: "system" }, scope: "regular" });
-    return;
-  }
-  let parsed;
+  proxyAuth.user = described.user || "";
+  proxyAuth.pass = described.pass || "";
+  const value = described.enabled
+    ? { mode: "pac_script", pacScript: { data: described.pac } }
+    : { mode: "system" };
   try {
-    parsed = new URL(proxyUrl.includes("://") ? proxyUrl : "http://" + proxyUrl);
+    const pending = chrome.proxy.settings.set({ value, scope: "regular" });
+    if (pending && typeof pending.catch === "function") pending.catch((error) => console.warn(error));
   } catch (error) {
-    appliedProxy = null;
-    return;
+    console.warn(error);
   }
-  if (!/^[\w.-]+$/.test(parsed.hostname) || !/^\d+$/.test(String(port))) {
-    appliedProxy = null;
-    return;
-  }
-  proxyAuth.user = decodeURIComponent(parsed.username || "");
-  proxyAuth.pass = decodeURIComponent(parsed.password || "");
-  const scheme = parsed.protocol.replace(":", "");
-  const kind = scheme.startsWith("socks5") ? "SOCKS5" : scheme.startsWith("socks4") ? "SOCKS4" : scheme === "https" ? "HTTPS" : "PROXY";
-  const port = parsed.port || (scheme.startsWith("socks") ? "1080" : "8080");
-  const pac = [
-    "function FindProxyForURL(url, host) {",
-    "  if (host === 'steampowered.com' || host === 'steamcommunity.com' || shExpMatch(host, '*.steampowered.com') || shExpMatch(host, '*.steamcommunity.com')) {",
-    "    return '" + kind + " " + parsed.hostname + ":" + port + "';",
-    "  }",
-    "  return 'DIRECT';",
-    "}",
-  ].join("\n");
-  chrome.proxy.settings.set({
-    value: { mode: "pac_script", pacScript: { data: pac } },
-    scope: "regular",
-  });
 }
 
 try {

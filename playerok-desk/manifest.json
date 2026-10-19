@@ -2,6 +2,7 @@
   "manifest_version": 3,
   "name": "Playerok Desk",
   "version": "1.0.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAzyPdwtZpeABLVAwrrwtBkzBt31WF4aSLerJMp1/z6MTaAH/f0X5uPI9n3jiMz3FFTEBgwJnGWsSwa84LFVFYHw8Uy66Smm1qtLlIXdWQ6at09FIJw2JaOGPwoOJGuCIdvrkytebOxUXOj3XgDuEvv1ItDlATTqm25VrGEKQ8/1A3jI08I2L8XR1TuuvbmVZXUVhnc3JGZz5sdFmoWfVY27P4SZyTBFOjOYd1JYtLpyRU33pC6uAzKhO934hkAD3Z3vpT+tKWzRUTzRBjXODSbjQbN81lOqEAzt8usXWSC4MZYPTslp/AuogXCZdnMcS69h63ao/8R7gK8CnhsaGQJQIDAQAB",
   "description": "Личная автовыдача, аренда Steam по maFile и перевыставление своих товаров на Playerok.",
   "permissions": ["storage", "alarms", "proxy", "webRequest", "webRequestAuthProvider", "tabs"],
   "host_permissions": [
@@ -10,7 +11,8 @@
     "https://*.steampowered.com/*",
     "https://steamcommunity.com/*",
     "https://*.steamcommunity.com/*",
-    "https://login.steampowered.com/*"
+    "https://login.steampowered.com/*",
+    "https://funpay.com/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -26,7 +28,13 @@
   "content_scripts": [
     {
       "matches": ["https://playerok.com/*"],
-      "js": ["lib/guard.js", "lib/rules.js", "lib/queries.js", "content.js"],
+      "js": ["lib/guard.js", "lib/rules.js", "lib/plugins.js", "lib/queries.js", "content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://funpay.com/*"],
+      "js": ["lib/rules.js", "lib/plugins.js", "funpay.js"],
       "css": ["content.css"],
       "run_at": "document_idle"
     }
