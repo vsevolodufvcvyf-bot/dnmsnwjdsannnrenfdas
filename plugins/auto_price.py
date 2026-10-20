@@ -290,6 +290,12 @@ def run_once(cardinal) -> list[str]:
         part = part.strip()
         if part.isdigit():
             skip_ids.add(int(part))
+    our_lot_ids = set()
+    for lot in ours:
+        try:
+            our_lot_ids.add(int(lot.id))
+        except (TypeError, ValueError):
+            continue
     dry = is_dry_run()
     pinned_hold = str(cfg.get("pinned_hold", "1")).strip() not in ("0", "false", "False")
     raise_pct = float(cfg.get("pinned_raise_pct", 0) or 0)
@@ -317,6 +323,7 @@ def run_once(cardinal) -> list[str]:
             continue
         sub_id = int(sub.id)
         query = _lot_text(lot)
+        floor, floor_why = _floor(lot)
         try:
             if sub_id not in public:
                 public[sub_id] = acc.get_subcategory_public_lots(SubCategoryTypes.COMMON, sub_id) or []
@@ -324,6 +331,7 @@ def run_once(cardinal) -> list[str]:
             stats = market_stats(
                 cardinal, sub_id, query, exclude_seller_id=our_id,
                 lots=public[sub_id], exclude_seller_ids=skip_ids,
+                floor=floor, exclude_lot_ids=our_lot_ids,
             )
         except Exception as ex:
             logger.debug("[AutoPrice] market %s: %s", sub_id, ex)
@@ -344,7 +352,6 @@ def run_once(cardinal) -> list[str]:
         pinned = pinned_hold and is_pinned(public.get(sub_id), lot.id)
         if pinned:
             _note_pinned(cardinal, lot)
-        floor, floor_why = _floor(lot)
         target, why = _target(current, stats, floor, undercut, max_drop, pinned=pinned,
                               raise_pct=raise_pct, max_over_med_pct=max_over_med, min_delta=min_delta)
         title = html.escape((getattr(lot, "description", None) or f"#{lot.id}")[:48])

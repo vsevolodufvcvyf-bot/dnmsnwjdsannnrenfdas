@@ -10,7 +10,7 @@ from telebot.types import Message, CallbackQuery
 from tg_bot import utils as tg_utils
 from tg_bot.panel_ui import (
     BTN_APR, BTN_BAL, BTN_CHECK, BTN_DAY, BTN_DRY, BTN_HOME, BTN_HOURS, BTN_MORE, BTN_OK, BTN_PANIC,
-    BTN_PRICE, BTN_STATS, BTN_STOCK,
+    BTN_PRICE, BTN_QUEUE, BTN_STATS, BTN_STOCK, BTN_TASKS,
     home_kb, home_text, reply_keyboard, send_home,
 )
 from shop_core.settings import is_dry_run, set_flag
@@ -105,6 +105,22 @@ def init_pre(cardinal):
             return
         from plugins.raise_clock import demand_text
         bot.send_message(m.chat.id, demand_text(), parse_mode="HTML")
+
+    @bot.message_handler(func=lambda m: bool(m.text) and m.text.strip() == BTN_QUEUE)
+    def _queue(m: Message):
+        if not _ok(cardinal, m.from_user.id):
+            return
+        from plugins.shop_desk import queue_view
+        text, kb = queue_view()
+        bot.send_message(m.chat.id, text, reply_markup=kb, parse_mode="HTML")
+
+    @bot.message_handler(func=lambda m: bool(m.text) and m.text.strip() == BTN_TASKS)
+    def _tasks(m: Message):
+        if not _ok(cardinal, m.from_user.id):
+            return
+        from plugins.shop_desk import tasks_view
+        text, kb = tasks_view()
+        bot.send_message(m.chat.id, text, reply_markup=kb, parse_mode="HTML")
 
     @bot.message_handler(func=lambda m: bool(m.text) and m.text.strip() == BTN_MORE)
     def _more(m: Message):
@@ -304,7 +320,7 @@ def init_post(cardinal):
         tg.bot.send_message(oid, home_text(cardinal), reply_markup=home_kb(cardinal), parse_mode="HTML")
         tg.bot.send_message(
             oid,
-            "Кнопки внизу: главная, кошелёк, сегодня, автоцена, часы спроса.",
+            "Кнопки внизу: главная, кошелёк, сегодня, очередь, задачи поставщика.",
             reply_markup=reply_keyboard(),
         )
     except Exception as ex:

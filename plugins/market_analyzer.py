@@ -157,22 +157,75 @@ def _activity(lot) -> int:
     return reviews * 3 + stars * 2 + online + auto + promo
 
 
+def own_market_filter(cardinal, exclude_seller_id: int | None = None, exclude_seller_ids=None,
+                      exclude_lot_ids=None) -> tuple[set[int], set[str], set[int]]:
+    skip_ids: set[int] = set()
+    skip_names: set[str] = set()
+    skip_lots: set[int] = set()
+    if exclude_seller_ids:
+        skip_ids.update(int(x) for x in exclude_seller_ids if x)
+    if exclude_seller_id:
+        skip_ids.add(int(exclude_seller_id))
+    if exclude_lot_ids:
+        skip_lots.update(int(x) for x in exclude_lot_ids if x)
+    acc = getattr(cardinal, "account", None)
+    if acc is not None:
+        if getattr(acc, "id", None):
+            skip_ids.add(int(acc.id))
+        username = getattr(acc, "username", None)
+        if username:
+            skip_names.add(str(username).lower())
+    return skip_ids, skip_names, skip_lots
+
+
+def is_own_lot(lot, skip_ids: set[int], skip_names: set[str], skip_lots: set[int]) -> bool:
+    try:
+        lid = getattr(lot, "id", None)
+        if lid is not None and int(lid) in skip_lots:
+            return True
+    except (TypeError, ValueError):
+        pass
+    seller = getattr(lot, "seller", None)
+    sid = int(getattr(seller, "id", 0) or 0) if seller else 0
+    if sid and sid in skip_ids:
+        return True
+    uname = (getattr(seller, "username", "") or "").lower() if seller else ""
+    return bool(uname and uname in skip_names)
+
+
+def without_dumps(similar: list, explicit_floor: float = 0.0) -> tuple[list, float]:
+    """Убирает явный демпинг: ниже max(пол, 35% медианы), если после фильтра остаётся выборка."""
+    if len(similar) < 4:
+        return similar, 0.0
+    prices = sorted(float(item[2]) for item in similar)
+    med = statistics.median(prices)
+    dyn = med * 0.35 if med > 0 else 0.0
+    bar = max(float(explicit_floor or 0), dyn)
+
+    def kept(limit: float) -> list:
+        return [item for item in similar if float(item[2]) + 1e-9 >= limit]
+
+    chosen = kept(bar)
+    if len(chosen) < 2:
+        bar = dyn
+        chosen = kept(bar)
+    if len(chosen) < 2:
+        return similar, 0.0
+    return chosen, bar
+
+
 def market_stats(cardinal, subcategory_id: int, query: str = "", exclude_seller_id: int | None = None, lots=None,
-                 exclude_seller_ids=None) -> dict:
+                 exclude_seller_ids=None, floor: float = 0.0, exclude_lot_ids=None) -> dict:
     """Снимок витрины категории: min/med/live_med/cheapest among similar lots."""
     if lots is None:
         lots = cardinal.account.get_subcategory_public_lots(SubCategoryTypes.COMMON, subcategory_id) or []
-    skip = set()
-    if exclude_seller_ids:
-        skip.update(int(x) for x in exclude_seller_ids if x)
-    if exclude_seller_id:
-        skip.add(int(exclude_seller_id))
+    skip_ids, skip_names, skip_lots = own_market_filter(
+        cardinal, exclude_seller_id, exclude_seller_ids, exclude_lot_ids,
+    )
     tokens = _tokens(query)
     similar = []
     for lot in lots:
-        seller = getattr(lot, "seller", None)
-        sid = int(getattr(seller, "id", 0) or 0) if seller else 0
-        if sid and sid in skip:
+        if is_own_lot(lot, skip_ids, skip_names, skip_lots):
             continue
         try:
             price = float(getattr(lot, "price", 0) or 0)
@@ -185,8 +238,9 @@ def market_stats(cardinal, subcategory_id: int, query: str = "", exclude_seller_
         if hit is None:
             continue
         similar.append((hit, _activity(lot), price, lot))
+    similar, bar = without_dumps(similar, floor)
     if not similar:
-        return {"n": 0, "min": 0.0, "max": 0.0, "med": 0.0, "live_med": 0.0, "q1": 0.0, "cheapest": 0.0}
+        return {"n": 0, "min": 0.0, "max": 0.0, "med": 0.0, "live_med": 0.0, "q1": 0.0, "cheapest": 0.0, "floor_bar": 0.0}
     similar.sort(key=lambda x: (-x[0], -x[1], x[2]))
     prices = sorted(p for _h, _a, p, _l in similar)
     n = len(prices)
@@ -203,14 +257,20 @@ def market_stats(cardinal, subcategory_id: int, query: str = "", exclude_seller_
         "q1": prices[max(0, n // 4)],
         "cheapest": prices[0],
         "similar": similar,
+        "floor_bar": bar,
     }
 
 
 def analyze_query(cardinal, subcategory, query: str, our_cost: float = 0.0, undercut: float = 0.0) -> str:
     lots = cardinal.account.get_subcategory_public_lots(SubCategoryTypes.COMMON, subcategory.id) or []
+    skip_ids, skip_names, skip_lots = own_market_filter(cardinal)
     tokens = _tokens(query)
     similar = []
+    skipped_own = 0
     for lot in lots:
+        if is_own_lot(lot, skip_ids, skip_names, skip_lots):
+            skipped_own += 1
+            continue
         price = getattr(lot, "price", None)
         try:
             price = float(price)
@@ -224,10 +284,18 @@ def analyze_query(cardinal, subcategory, query: str, our_cost: float = 0.0, unde
             continue
         similar.append((hit, _activity(lot), price, lot))
     if not similar:
+        if skipped_own:
+            return (
+                f"На витрине <b>{escape(getattr(subcategory, 'fullname', str(subcategory.id)))}</b> "
+                "чужих лотов с этой формулировкой нет. Свои в расчёт не беру."
+            )
         return (
             f"На витрине <b>{escape(getattr(subcategory, 'fullname', str(subcategory.id)))}</b> "
             "пока нет лотов с ценой.\nПопробуй другими словами или другую категорию."
         )
+    from shop_core.panels import min_sale_for_cost
+    cost_floor = min_sale_for_cost(float(our_cost or 0)) if our_cost else 0.0
+    similar, bar = without_dumps(similar, cost_floor)
     similar.sort(key=lambda x: (-x[0], -x[1], x[2]))
     prices = [p for _h, _a, p, _l in similar]
     prices.sort()
@@ -259,6 +327,7 @@ def analyze_query(cardinal, subcategory, query: str, our_cost: float = 0.0, unde
         f"Категория: <b>{escape(getattr(subcategory, 'fullname', ''))}</b>",
         f"Искал: <i>{escape(query)}</i>",
         f"Похожих лотов: <b>{n}</b>",
+        *([f"Ниже планки <code>{bar:.2f}</code> не считал: это пол закупки или явный демпинг к медиане."] if bar else []),
         "",
         f"Самый дешёвый: <code>{mn:.2f}</code>",
         f"Самый дорогой: <code>{mx:.2f}</code>",

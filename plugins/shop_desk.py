@@ -250,6 +250,7 @@ def wiz_kb() -> K:
         B("📋 Задачи поставщиков", callback_data="SHOP:tasks"),
         B("🙋 Чаты человеку", callback_data="SHOP:human"),
     )
+    kb.row(B("🚨 Очередь оператора", callback_data="SHOP:q"))
     kb.row(B("◀️ Главная", callback_data="PANEL:home"))
     return kb
 
@@ -274,11 +275,12 @@ def tasks_view() -> tuple[str, K]:
         )
         if r["task_id"]:
             kb.add(B(f"🔎 #{str(r['task_id'])[:20]} статус", callback_data=f"SHOP:st:{int(r['rid'])}"))
-    kb.row(B("◀️ Панели", callback_data="SHOP:wiz"))
+    kb.row(B("◀️ Панели", callback_data="SHOP:wiz"), B("🏠 Главная", callback_data="PANEL:home"))
     return "\n".join(lines), kb
 
 
 def task_status_text(rid: int) -> str:
+    from shop_core.task_status import format_task_status
     with get_db() as conn:
         row = conn.execute(
             "SELECT order_id, plugin_name, provider, task_id FROM supplier_orders WHERE rowid = ?",
@@ -302,17 +304,23 @@ def task_status_text(rid: int) -> str:
         )
         data = res.json() if res is not None else {}
     except Exception as ex:
-        return f"Панель не ответила: <code>{html.escape(str(ex)[:200])}</code>"
-    if not isinstance(data, dict):
-        return f"Ответ панели: <code>{html.escape(str(data)[:300])}</code>"
-    parts = [f"🔎 Задача <code>{html.escape(str(row['task_id']))}</code> [{html.escape(section)}]"]
-    for name, label in (("status", "Статус"), ("remains", "Осталось"), ("start_count", "Старт"),
-                        ("charge", "Списано"), ("currency", "Валюта"), ("error", "Ошибка")):
-        if data.get(name) not in (None, ""):
-            parts.append(f"{label}: <code>{html.escape(str(data.get(name)))}</code>")
-    if len(parts) == 1:
-        parts.append(f"Ответ: <code>{html.escape(str(data)[:300])}</code>")
-    return "\n".join(parts)
+        return f"Панель не ответила: <code>{html.escape(type(ex).__name__)}</code>"
+    return format_task_status(str(row["task_id"]), section, data)
+
+
+def queue_view() -> tuple[str, K]:
+    from shop_core.operator_queue import open_items, queue_text
+    rows = open_items()
+    kb = K()
+    for row in rows:
+        rid = int(row["id"])
+        label = str(row["reason"] or "human")
+        kb.add(B(f"✅ Решено #{rid} ({label})"[:64], callback_data=f"SHOP:qok:{rid}"))
+        if row["chat_id"] is not None:
+            kb.add(B(f"💬 Чат {int(row['chat_id'])} человеку"[:64], callback_data=f"SHOP:qhm:{rid}"))
+    kb.row(B("🔄 Обновить", callback_data="SHOP:q"), B("◀️ Панели", callback_data="SHOP:wiz"))
+    kb.row(B("🏠 Главная", callback_data="PANEL:home"))
+    return queue_text(rows), kb
 
 
 def human_view() -> tuple[str, K]:
@@ -360,6 +368,13 @@ def panel_kb(section: str) -> K:
         B("🏷 Ключевые слова", callback_data=f"SHOP:ask:{section}:kw"[:64]),
         B("◀️ К списку", callback_data="SHOP:wiz"),
     )
+    try:
+        from shop_core.breaker import pause_left
+        url = (cfg[section].get("api_url") or "").strip() if cfg.has_section(section) else ""
+        if url and pause_left(url) > 0:
+            kb.row(B("▶️ Снять паузу", callback_data=f"SHOP:unbrk:{section}"[:64]))
+    except Exception:
+        logger.debug("TRACEBACK", exc_info=True)
     return kb
 
 
@@ -379,9 +394,18 @@ def panel_text(section: str) -> str:
         f"Ключ: {mask_secret(b.get('api_key') or '')}\n"
         f"service_id: <code>{html.escape(b.get('service_id') or '—')}</code>\n"
         f"Себестоимость 1 шт.: <code>{html.escape(b.get('cost_per_unit') or '0')}</code>\n"
-        f"Слова для лота: <i>{html.escape(b.get('keywords') or '—')}</i>\n\n"
+        f"Слова для лота: <i>{html.escape(b.get('keywords') or '—')}</i>\n"
+        f"{_pause_line(b.get('api_url') or '')}\n"
         f"Сайты сам не ищу — только то, что ты вставишь."
     )
+
+
+def _pause_line(url: str) -> str:
+    from shop_core.breaker import pause_left
+    left = pause_left(url)
+    if left <= 0:
+        return "Пауза: нет. После трёх ошибок 402/502/503 или таймаутов бот 15 минут сначала берёт запасную панель."
+    return f"⏸ Пауза ещё <b>{max(1, left // 60)}</b> мин: сначала идёт запасная панель. Кнопка «Снять паузу» возвращает эту."
 
 
 def wiz_intro() -> str:
@@ -434,6 +458,7 @@ def init_settings(cardinal):
         ("goal", "цель по прибыли на день", True),
         ("hours", "часы, когда покупают", True),
         ("op", "добавить оператора @username", True),
+        ("queue", "очередь оператора", True),
     ])
 
 
@@ -448,6 +473,13 @@ def init_pre(cardinal):
 
     def guard(m) -> bool:
         return _ok(cardinal, m.from_user.id)
+
+    @bot.message_handler(commands=["queue", "очередь"])
+    def cmd_queue(m: Message):
+        if not guard(m):
+            return
+        text, kb = queue_view()
+        bot.send_message(m.chat.id, text, reply_markup=kb, parse_mode="HTML")
 
     @bot.message_handler(commands=["panels", "panel_add", "поставщик"])
     def cmd_panels(m: Message):
@@ -689,6 +721,40 @@ def init_pre(cardinal):
         if action == "human":
             text, kb = human_view()
             bot.send_message(c.message.chat.id, text, reply_markup=kb, parse_mode="HTML")
+            return
+        if action == "unbrk" and len(parts) > 2:
+            from shop_core.breaker import note_success
+            section = parts[2]
+            cfg = load_suppliers_cfg()
+            url = (cfg[section].get("api_url") or "").strip() if cfg.has_section(section) else ""
+            if url:
+                note_success(url)
+            bot.send_message(
+                c.message.chat.id,
+                "Пауза снята. Следующий заказ снова может пойти на эту панель.\n\n" + panel_text(section),
+                reply_markup=panel_kb(section),
+                parse_mode="HTML",
+            )
+            return
+        if action == "q":
+            text, kb = queue_view()
+            bot.send_message(c.message.chat.id, text, reply_markup=kb, parse_mode="HTML")
+            return
+        if action == "qok" and len(parts) > 2 and parts[2].isdigit():
+            from shop_core.operator_queue import resolve_item
+            resolve_item(int(parts[2]))
+            text, kb = queue_view()
+            bot.send_message(c.message.chat.id, "Закрыл пункт очереди.\n\n" + text, reply_markup=kb, parse_mode="HTML")
+            return
+        if action == "qhm" and len(parts) > 2 and parts[2].isdigit():
+            from shop_core.bus import mark_human
+            from shop_core.operator_queue import open_items
+            row = next((r for r in open_items(50) if int(r["id"]) == int(parts[2])), None)
+            if row and row["chat_id"] is not None:
+                mark_human(int(row["chat_id"]), str(row["order_id"] or "") or None)
+                bot.send_message(c.message.chat.id, f"Чат <code>{int(row['chat_id'])}</code> отдан человеку. ИИ в нём молчит.", parse_mode="HTML")
+            else:
+                bot.send_message(c.message.chat.id, "Пункт уже закрыт или в нём нет чата.")
             return
         if action == "rel" and len(parts) > 2 and parts[2].lstrip("-").isdigit():
             from shop_core.bus import release_chat

@@ -76,23 +76,24 @@ def _arm_order(cardinal, event):
         "plugin_name": best.get("plugin_name") or "digital",
         "target_section": str(best.get("section") or "").split("/")[0],
     }
+    kind = _buyer_kind(best)
     buyer = getattr(order, "buyer_id", None)
     name = getattr(order, "buyer_username", None)
     if link:
-        status = put_pending(chat_id, order_id, "digital", "confirm", link, amount, sale, extra,
+        status = put_pending(chat_id, order_id, kind, "confirm", link, amount, sale, extra,
                              cardinal=cardinal, peer_id=buyer)
         if status == "fail":
             return None
         if status == "queued":
-            return {"chat_id": chat_id, "name": name, "link": link, "mode": "queued"}
-        return {"chat_id": chat_id, "name": name, "link": link, "mode": "confirm"}
-    status = put_pending(chat_id, order_id, "digital", "need_target", "", amount, sale, extra,
+            return {"chat_id": chat_id, "name": name, "link": link, "mode": "queued", "kind": kind}
+        return {"chat_id": chat_id, "name": name, "link": link, "mode": "confirm", "kind": kind}
+    status = put_pending(chat_id, order_id, kind, "need_target", "", amount, sale, extra,
                          cardinal=cardinal, peer_id=buyer)
     if status == "fail":
         return None
     if status == "queued":
-        return {"chat_id": chat_id, "name": name, "link": None, "mode": "queued"}
-    return {"chat_id": chat_id, "name": name, "link": None, "mode": "need"}
+        return {"chat_id": chat_id, "name": name, "link": None, "mode": "queued", "kind": kind}
+    return {"chat_id": chat_id, "name": name, "link": None, "mode": "need", "kind": kind}
 
 
 def _ask_after_arm(cardinal, armed):
@@ -102,10 +103,10 @@ def _ask_after_arm(cardinal, armed):
             ask_queued(cardinal, armed["chat_id"], armed["name"])
             return
         if armed["mode"] == "confirm":
-            ask_confirm(cardinal, armed["chat_id"], "digital", armed["link"], armed["name"])
+            ask_confirm(cardinal, armed["chat_id"], armed.get("kind") or "digital", armed["link"], armed["name"])
         else:
             bot_send(cardinal, armed["chat_id"], "Заказ принят. Нужны данные для выдачи.", armed["name"])
-            ask_target(cardinal, armed["chat_id"], "digital", armed["name"])
+            ask_target(cardinal, armed["chat_id"], armed.get("kind") or "digital", armed["name"])
     except Exception as ex:
         logger.error("[DigitalFulfill] ask: %s", ex)
 
@@ -125,9 +126,18 @@ def on_order(cardinal, event):
     Thread(target=_process_order, args=(cardinal, event), daemon=True).start()
 
 
+def _buyer_kind(best: dict) -> str:
+    blob = f"{best.get('plugin_name') or ''} {best.get('section') or ''}".lower()
+    if "steam" in blob:
+        return "steam"
+    if "robux" in blob or "gamepass" in blob:
+        return "robux"
+    return "digital"
+
+
 def on_message(cardinal, event):
     try:
-        handle_pending_message(cardinal, event, {"digital"})
+        handle_pending_message(cardinal, event, {"digital", "steam", "robux"})
     except Exception as ex:
         logger.debug("[DigitalFulfill] msg: %s", ex)
 

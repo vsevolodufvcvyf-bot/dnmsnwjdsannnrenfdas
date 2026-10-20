@@ -29,6 +29,8 @@ BTN_MORE = "📂 Ещё"
 BTN_STATS = "📊 Статы"
 BTN_DAY = "☀️ Сегодня"
 BTN_HOURS = "🕐 Часы"
+BTN_QUEUE = "🚨 Очередь"
+BTN_TASKS = "📋 Задачи"
 
 HR = "━━━━━━━━━━━━━━━━"
 
@@ -37,6 +39,7 @@ def all_reply_labels() -> set[str]:
     return {
         BTN_HOME, BTN_PRICE, BTN_STOCK, BTN_BAL, BTN_CHECK, BTN_APR,
         BTN_PANIC, BTN_OK, BTN_DRY, BTN_MORE, BTN_STATS, BTN_DAY, BTN_HOURS,
+        BTN_QUEUE, BTN_TASKS,
     }
 
 
@@ -45,6 +48,7 @@ def reply_keyboard() -> ReplyKeyboardMarkup:
     kb.row(KeyboardButton(BTN_HOME), KeyboardButton(BTN_BAL), KeyboardButton(BTN_DAY))
     kb.row(KeyboardButton(BTN_APR), KeyboardButton(BTN_CHECK), KeyboardButton(BTN_PRICE))
     kb.row(KeyboardButton(BTN_HOURS), KeyboardButton(BTN_STOCK), KeyboardButton(BTN_MORE))
+    kb.row(KeyboardButton(BTN_QUEUE), KeyboardButton(BTN_TASKS))
     return kb
 
 
@@ -149,7 +153,11 @@ def home_text(cardinal) -> str:
         money_line = f"💰  ≈ <b>{rub:.0f}</b> ₽    к выводу: неизвестно"
     else:
         money_line = f"💰  <b>{rub:.0f}</b> ₽    к выводу  {avail:.0f} ₽"
+        held = max(0.0, rub - avail)
+        if held >= 1:
+            money_line += f"\n⏳  удержано  <b>{held:.0f}</b> ₽"
     today = _today_block()
+    attention = _attention_line()
     low = _shortage_line(cardinal)
     apr = "выкл"
     try:
@@ -165,14 +173,55 @@ def home_text(cardinal) -> str:
         f"{money_line}\n"
         f"📦  лотов  <b>{n_lots}</b>    сделки  {sales}\n"
         f"⚖️  автоцена  <b>{apr}</b>\n"
+        + (f"\n{attention}\n" if attention else "")
         + (f"\n{today}\n" if today else "\n")
         + (f"{low}\n" if low else "")
-        + "\n<i>/goal — цель на день · /hours — когда покупают · /lottext — текст лота</i>"
+        + "\n<i>/queue — очередь · /goal — цель · /hours — когда покупают · /lottext — текст лота</i>"
     )
+
+
+def _attention_line() -> str:
+    parts = []
+    try:
+        from shop_core.operator_queue import open_count
+        queued = open_count()
+        if queued:
+            parts.append(f"🚨  очередь  <b>{queued}</b>")
+    except Exception:
+        logger.debug("TRACEBACK", exc_info=True)
+    try:
+        from shop_core.panels import paused_sections
+        paused = paused_sections()
+        if paused:
+            names = ", ".join(html.escape(name) for name in paused[:4])
+            parts.append(f"⏸  пауза панелей: {names}")
+    except Exception:
+        logger.debug("TRACEBACK", exc_info=True)
+    try:
+        from shop_core.task_status import recent_task_count
+        tasks = recent_task_count()
+        if tasks:
+            parts.append(f"📋  задач за сутки  <b>{tasks}</b>")
+    except Exception:
+        logger.debug("TRACEBACK", exc_info=True)
+    return "\n".join(parts)
 
 
 def home_kb(cardinal) -> K:
     kb = K()
+    queue_label = "🚨 Очередь"
+    try:
+        from shop_core.operator_queue import open_count
+        queued = open_count()
+        if queued:
+            queue_label = f"🚨 Очередь ({queued})"
+    except Exception:
+        logger.debug("TRACEBACK", exc_info=True)
+    kb.row(
+        B(queue_label, callback_data="SHOP:q"),
+        B("📋 Задачи", callback_data="SHOP:tasks"),
+        B("🔄", callback_data="PANEL:home"),
+    )
     kb.row(
         B("☀️ Сегодня", callback_data="SHOP:day"),
         B("🕐 Часы", callback_data="PANEL:hours"),
@@ -216,7 +265,7 @@ def send_home(tg, m: Message) -> None:
     clear_all_waits(m.from_user.id)
     tg.bot.send_message(
         m.chat.id,
-        "Кнопки внизу: главная, кошелёк, сегодня, автоцена, часы спроса.",
+        "Кнопки внизу: главная, кошелёк, сегодня, очередь, задачи поставщика.",
         reply_markup=reply_keyboard(),
     )
     tg.bot.send_message(
