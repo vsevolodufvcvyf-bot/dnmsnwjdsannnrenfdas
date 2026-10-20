@@ -1,0 +1,54 @@
+{
+  "manifest_version": 3,
+  "name": "Схема — разметка графика",
+  "version": "0.3.0",
+  "description": "Фигуры, новости и один вывод по любой монете на графике TradingView.",
+  "permissions": ["storage", "alarms", "notifications"],
+  "host_permissions": [
+    "https://*.tradingview.com/*",
+    "https://www.tradingview.com/*",
+    "https://tradingview.com/*",
+    "https://data-api.binance.vision/*",
+    "https://api.mexc.com/*",
+    "https://www.okx.com/*",
+    "https://api.kucoin.com/*",
+    "https://api.coingecko.com/*",
+    "https://news.google.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Схема",
+    "default_icon": {
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.tradingview.com/*",
+        "https://www.tradingview.com/*",
+        "https://tradingview.com/*"
+      ],
+      "js": ["content/page-bridge.js"],
+      "world": "MAIN",
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://*.tradingview.com/*",
+        "https://www.tradingview.com/*",
+        "https://tradingview.com/*"
+      ],
+      "js": ["content/content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
